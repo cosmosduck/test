@@ -2,6 +2,7 @@ class SchoolChatApp {
   constructor() {
     this.token = localStorage.getItem('token');
     this.username = localStorage.getItem('username');
+    this.userId = localStorage.getItem('userId');
     this.role = localStorage.getItem('role');
     this.currentChannel = 'general';
     this.socket = null;
@@ -64,15 +65,17 @@ class SchoolChatApp {
       const data = await response.json();
       localStorage.setItem('token', data.token);
       localStorage.setItem('username', data.username);
+      localStorage.setItem('userId', data.userId);
       localStorage.setItem('role', data.role);
 
       this.token = data.token;
       this.username = data.username;
+      this.userId = data.userId;
       this.role = data.role;
 
       this.showChatApp();
     } catch (error) {
-      errorDiv.textContent = 'Login failed';
+      errorDiv.textContent = 'Login failed: ' + error.message;
     }
   }
 
@@ -105,7 +108,7 @@ class SchoolChatApp {
         <div class="main-content">
           <div class="chat-header">
             <h1># ${this.currentChannel}</h1>
-            <div class="active-users" id="active-users"></div>
+            <div class="active-users" id="active-users"><span class="online-indicator"></span> Users online</div>
           </div>
           <div class="messages-container" id="messages"></div>
           <div class="input-area">
@@ -118,7 +121,7 @@ class SchoolChatApp {
       <div class="admin-panel" id="admin-panel">
         <div class="admin-header">
           <h2>⚙️ Admin Dashboard</h2>
-          <button class="close-btn" onclick="app.closeAdminPanel()">✕</button>
+          <button class="close-btn" onclick="app.closeAdminPanel()">&times;</button>
         </div>
         <div class="admin-content">
           <div class="admin-section">
@@ -143,6 +146,9 @@ class SchoolChatApp {
     this.connectSocket();
     this.loadMessages();
     if (this.role === 'owner') this.loadUsers();
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   }
 
   // ============ SOCKET.IO CONNECTION ============
@@ -154,11 +160,14 @@ class SchoolChatApp {
     });
 
     this.socket.on('connect', () => {
-      console.log('Connected to server');
+      console.log('✅ Connected to server');
       this.socket.emit('join_channel', this.currentChannel);
     });
 
     this.socket.on('receive_message', (message) => {
+      if (!this.messages[message.channel]) {
+        this.messages[message.channel] = [];
+      }
       this.messages[message.channel].push(message);
       if (message.channel === this.currentChannel) {
         this.displayMessage(message);
@@ -170,7 +179,7 @@ class SchoolChatApp {
     this.socket.on('user_joined', (data) => {
       const messagesDiv = document.getElementById('messages');
       if (messagesDiv) {
-        messagesDiv.innerHTML += `<div class="system-message">✨ ${data.message}</div>`;
+        messagesDiv.innerHTML += `<div class="system-message">${data.message}</div>`;
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
       }
     });
@@ -210,7 +219,7 @@ class SchoolChatApp {
         headers: { 'Authorization': `Bearer ${this.token}` }
       });
       const messages = await response.json();
-      this.messages[this.currentChannel] = messages;
+      this.messages[this.currentChannel] = messages || [];
       this.displayMessages();
     } catch (error) {
       console.error('Failed to load messages', error);
@@ -270,7 +279,6 @@ class SchoolChatApp {
   }
 
   updateActiveUsers() {
-    // This would be updated via socket events
     const activeDiv = document.getElementById('active-users');
     if (activeDiv) {
       activeDiv.innerHTML = `<span class="online-indicator"></span> Users online`;
@@ -281,9 +289,6 @@ class SchoolChatApp {
   openAdminPanel() {
     document.getElementById('admin-panel').classList.add('open');
     this.loadUsers();
-    if (Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
   }
 
   closeAdminPanel() {
@@ -311,11 +316,10 @@ class SchoolChatApp {
         <div class="user-list-item-info">
           <div class="user-list-item-name">${user.username}</div>
           <div class="user-list-item-status">
-            ${user.isOnline ? '<span class="online-indicator"></span>Online' : 'Offline'}
-            ${user.role === 'owner' ? ' • Owner' : ''}
+            ${user.role === 'owner' ? '👑 Owner' : '👤 Student'}
           </div>
         </div>
-        ${user.role !== 'owner' ? `<button class="delete-user-btn" onclick="app.deleteUser('${user.id}')">Delete</button>` : ''}
+        ${user.role !== 'owner' ? `<button class="delete-user-btn" onclick="app.deleteUser(${user.id})">Delete</button>` : ''}
       </div>
     `).join('');
   }
@@ -340,16 +344,17 @@ class SchoolChatApp {
       });
 
       if (!response.ok) {
-        alert('Failed to create user');
+        const error = await response.json();
+        alert('Error: ' + error.error);
         return;
       }
 
       document.getElementById('new-username').value = '';
       document.getElementById('new-password').value = '';
-      alert(`User "${username}" created successfully!`);
+      alert(`✅ User "${username}" created successfully!`);
       this.loadUsers();
     } catch (error) {
-      alert('Error creating user');
+      alert('❌ Error creating user: ' + error.message);
     }
   }
 
@@ -367,16 +372,15 @@ class SchoolChatApp {
         return;
       }
 
-      alert('User deleted successfully');
+      alert('✅ User deleted successfully');
       this.loadUsers();
     } catch (error) {
-      alert('Error deleting user');
+      alert('❌ Error deleting user');
     }
   }
 
   // ============ UTILITIES ============
   refreshUI() {
-    // Update active channel highlighting
     document.querySelectorAll('.channel-item').forEach(item => {
       item.classList.remove('active');
       if (item.textContent.includes(this.currentChannel)) {
@@ -384,7 +388,6 @@ class SchoolChatApp {
       }
     });
 
-    // Update notification badges
     document.querySelectorAll('.notification-badge').forEach(badge => {
       const channel = badge.id.split('-')[0];
       if (this.notifications[channel] > 0) {
@@ -409,5 +412,4 @@ class SchoolChatApp {
   }
 }
 
-// Initialize app
 const app = new SchoolChatApp();

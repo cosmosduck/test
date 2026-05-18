@@ -13,9 +13,13 @@
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.0",
     "dotenv": "^16.0.3",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "pg": "^8.10.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.20"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }

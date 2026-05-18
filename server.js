@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
+const db = require('./db');
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
@@ -20,40 +22,62 @@ app.use(express.static('public'));
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_key';
 
-// In-memory storage (replace with database for production)
-let users = [
-  {
-    id: 'owner',
-    username: process.env.OWNER_USERNAME || 'admin',
-    passwordHash: bcrypt.hashSync(process.env.OWNER_PASSWORD || 'admin123', 10),
-    role: 'owner'
+// Initialize database
+db.initializeDatabase();
+
+// Create owner account if it doesn't exist
+async function createOwnerAccount() {
+  try {
+    const owner = await db.getUserByUsername(process.env.OWNER_USERNAME || 'admin');
+    if (!owner) {
+      const passwordHash = bcrypt.hashSync(process.env.OWNER_PASSWORD || 'admin123', 10);
+      const ownerUser = {
+        username: process.env.OWNER_USERNAME || 'admin',
+        password_hash: passwordHash,
+        role: 'owner'
+      };
+      await db.pool.query(
+        'INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)',
+        [ownerUser.username, ownerUser.password_hash, ownerUser.role]
+      );
+      console.log('✅ Owner account created');
+    }
+  } catch (error) {
+    console.error('Error creating owner account:', error);
   }
-];
-
-let messages = {
-  general: [],
-  class: []
-};
-
-let activeUsers = {}; // Track online users
+}
 
 // ============ AUTHENTICATION ROUTES ============
 
 // Login route
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-  const user = users.find(u => u.username === username);
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid credentials' });
+    const user = await db.getUserByUsername(username);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    if (!bcrypt.compareSync(password, user.password_hash)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { userId: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      token,
+      username: user.username,
+      role: user.role,
+      userId: user.id
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Login failed' });
   }
-
-  if (!bcrypt.compareSync(password, user.passwordHash)) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  const token = jwt.sign({ userId: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, username: user.username, role: user.role });
 });
 
 // Verify token middleware
@@ -72,12 +96,14 @@ function verifyToken(req, res, next) {
 }
 
 // Get chat history
-app.get('/api/messages/:channel', verifyToken, (req, res) => {
-  const channel = req.params.channel;
-  if (!messages[channel]) {
-    return res.status(404).json({ error: 'Channel not found' });
+app.get('/api/messages/:channel', verifyToken, async (req, res) => {
+  try {
+    const channel = req.params.channel;
+    const messages = await db.getMessagesByChannel(channel, 100);
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load messages' });
   }
-  res.json(messages[channel]);
 });
 
 // ============ OWNER DASHBOARD ROUTES ============
@@ -91,48 +117,53 @@ function isOwner(req, res, next) {
 }
 
 // Get all users (owner only)
-app.get('/api/admin/users', verifyToken, isOwner, (req, res) => {
-  res.json(users.map(u => ({
-    id: u.id,
-    username: u.username,
-    role: u.role,
-    isOnline: activeUsers[u.id] ? true : false
-  })));
+app.get('/api/admin/users', verifyToken, isOwner, async (req, res) => {
+  try {
+    const users = await db.getAllUsers();
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get users' });
+  }
 });
 
 // Create new user credentials (owner only)
-app.post('/api/admin/users', verifyToken, isOwner, (req, res) => {
-  const { username, password } = req.body;
+app.post('/api/admin/users', verifyToken, isOwner, async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password required' });
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+
+    const existingUser = await db.getUserByUsername(username);
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 10);
+    await db.createUser(username, passwordHash);
+
+    res.json({ message: 'User created successfully', username });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create user' });
   }
-
-  if (users.find(u => u.username === username)) {
-    return res.status(400).json({ error: 'Username already exists' });
-  }
-
-  const newUser = {
-    id: Date.now().toString(),
-    username,
-    passwordHash: bcrypt.hashSync(password, 10),
-    role: 'student'
-  };
-
-  users.push(newUser);
-  res.json({ message: 'User created', username });
 });
 
 // Delete user credentials (owner only)
-app.delete('/api/admin/users/:userId', verifyToken, isOwner, (req, res) => {
-  const userId = req.params.userId;
+app.delete('/api/admin/users/:userId', verifyToken, isOwner, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
 
-  if (userId === 'owner') {
-    return res.status(400).json({ error: 'Cannot delete owner account' });
+    const user = await db.getUserById(userId);
+    if (user && user.role === 'owner') {
+      return res.status(400).json({ error: 'Cannot delete owner account' });
+    }
+
+    await db.deleteUser(userId);
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete user' });
   }
-
-  users = users.filter(u => u.id !== userId);
-  res.json({ message: 'User deleted' });
 });
 
 // ============ SOCKET.IO REAL-TIME CHAT ============
@@ -148,57 +179,71 @@ io.use((socket, next) => {
   }
 });
 
+const activeUsers = {}; // Track online users
+
 io.on('connection', (socket) => {
   const userId = socket.user.userId;
   const username = socket.user.username;
+  const role = socket.user.role;
 
   // Track active users
-  activeUsers[userId] = { username, socketId: socket.id };
+  activeUsers[userId] = { username, socketId: socket.id, role };
   io.emit('user_online', { userId, username });
 
-  console.log(`${username} connected`);
+  console.log(`✅ ${username} connected`);
 
   // Join channel
   socket.on('join_channel', (channel) => {
     socket.join(channel);
-    io.to(channel).emit('user_joined', { username, message: `${username} joined ${channel}` });
+    io.to(channel).emit('user_joined', {
+      username,
+      message: `✨ ${username} joined #${channel}`
+    });
   });
 
   // Send message
-  socket.on('send_message', (data) => {
-    const { channel, text } = data;
-    const message = {
-      id: Date.now(),
-      username,
-      userId,
-      text,
-      timestamp: new Date(),
-      channel
-    };
+  socket.on('send_message', async (data) => {
+    try {
+      const { channel, text } = data;
 
-    // Store message
-    if (!messages[channel]) messages[channel] = [];
-    messages[channel].push(message);
+      // Save to database
+      const savedMessage = await db.saveMessage(userId, username, channel, text);
 
-    // Broadcast to channel
-    io.to(channel).emit('receive_message', message);
-    
-    // Notify users not in channel
-    socket.broadcast.emit('notification', {
-      username,
-      channel,
-      message: `${username}: ${text.substring(0, 30)}...`
-    });
+      const message = {
+        id: savedMessage.id,
+        username,
+        userId,
+        text,
+        timestamp: savedMessage.created_at,
+        channel
+      };
+
+      // Broadcast to channel
+      io.to(channel).emit('receive_message', message);
+
+      // Notify users not in channel
+      socket.broadcast.emit('notification', {
+        username,
+        channel,
+        message: `${username}: ${text.substring(0, 30)}...`
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+    }
   });
 
   // User disconnect
   socket.on('disconnect', () => {
     delete activeUsers[userId];
     io.emit('user_offline', { userId, username });
-    console.log(`${username} disconnected`);
+    console.log(`❌ ${username} disconnected`);
   });
 });
 
 server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📊 Database: ${process.env.DATABASE_URL || 'Local PostgreSQL'}`);
+  createOwnerAccount();
 });
+
+module.exports = app;
