@@ -9,6 +9,8 @@ class SchoolChatApp {
     this.messages = { general: [], class: [] };
     this.notifications = { general: 0, class: 0 };
     this.activeUsers = [];
+    this.typingUsers = {};
+    this.typingTimeout = null;
 
     if (this.token) {
       this.showChatApp();
@@ -33,11 +35,11 @@ class SchoolChatApp {
             <label for="password">Password</label>
             <input type="password" id="password" placeholder="Enter your password">
           </div>
-          <button class="login-btn" onclick="app.login()">Login</button>
+          <button class="login-btn" onclick="chatApp.login()">Login</button>
         </div>
       </div>
     `;
-    window.app = this;
+    window.chatApp = this;
   }
 
   async login() {
@@ -90,18 +92,18 @@ class SchoolChatApp {
             <div class="user-info">Logged as: ${this.username}</div>
           </div>
           <div class="sidebar-channels">
-            <div class="channel-item active" onclick="app.switchChannel('general')">
+            <div class="channel-item active" onclick="chatApp.switchChannel('general')">
               <span># general</span>
               <span class="notification-badge" id="general-badge" style="display: none;">0</span>
             </div>
-            <div class="channel-item" onclick="app.switchChannel('class')">
+            <div class="channel-item" onclick="chatApp.switchChannel('class')">
               <span># class</span>
               <span class="notification-badge" id="class-badge" style="display: none;">0</span>
             </div>
           </div>
           <div class="sidebar-footer">
-            ${this.role === 'owner' ? '<button class="btn btn-primary" onclick="app.openAdminPanel()">👤 Admin</button>' : ''}
-            <button class="btn btn-danger" onclick="app.logout()">Logout</button>
+            ${this.role === 'owner' ? '<button class="btn btn-primary" onclick="chatApp.openAdminPanel()">👤 Admin</button>' : ''}
+            <button class="btn btn-danger" onclick="chatApp.logout()">Logout</button>
           </div>
         </div>
 
@@ -111,9 +113,10 @@ class SchoolChatApp {
             <div class="active-users" id="active-users"><span class="online-indicator"></span> Users online</div>
           </div>
           <div class="messages-container" id="messages"></div>
+          <div class="typing-indicator" id="typing-indicator"></div>
           <div class="input-area">
-            <input type="text" id="message-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter') app.sendMessage()">
-            <button class="send-btn" onclick="app.sendMessage()">Send</button>
+            <input type="text" id="message-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter') chatApp.sendMessage()" oninput="chatApp.handleTyping()">
+            <button class="send-btn" onclick="chatApp.sendMessage()">Send</button>
           </div>
         </div>
       </div>
@@ -121,7 +124,7 @@ class SchoolChatApp {
       <div class="admin-panel" id="admin-panel">
         <div class="admin-header">
           <h2>⚙️ Admin Dashboard</h2>
-          <button class="close-btn" onclick="app.closeAdminPanel()">&times;</button>
+          <button class="close-btn" onclick="chatApp.closeAdminPanel()">&times;</button>
         </div>
         <div class="admin-content">
           <div class="admin-section">
@@ -132,7 +135,7 @@ class SchoolChatApp {
             <div class="form-group-inline">
               <input type="password" id="new-password" placeholder="Password">
             </div>
-            <button class="btn btn-primary" onclick="app.createUser()" style="width: 100%;">Create User</button>
+            <button class="btn btn-primary" onclick="chatApp.createUser()" style="width: 100%;">Create User</button>
           </div>
           <div class="admin-section">
             <h3>Manage Users</h3>
@@ -142,7 +145,7 @@ class SchoolChatApp {
       </div>
     `;
 
-    window.app = this;
+    window.chatApp = this;
     this.connectSocket();
     this.loadMessages();
     if (this.role === 'owner') this.loadUsers();
@@ -185,11 +188,19 @@ class SchoolChatApp {
     });
 
     this.socket.on('user_online', (data) => {
-      this.updateActiveUsers();
+      this.updateActiveUsers(data.count);
     });
 
     this.socket.on('user_offline', (data) => {
-      this.updateActiveUsers();
+      this.updateActiveUsers(data.count);
+    });
+
+    this.socket.on('user_typing', (data) => {
+      this.showTypingIndicator(data.username);
+    });
+
+    this.socket.on('user_stopped_typing', (data) => {
+      this.removeTypingIndicator(data.username);
     });
 
     this.socket.on('notification', (data) => {
@@ -255,11 +266,48 @@ class SchoolChatApp {
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
+  handleTyping() {
+    if (!this.socket) return;
+    this.socket.emit('typing_start', this.currentChannel);
+    clearTimeout(this.typingTimeout);
+    this.typingTimeout = setTimeout(() => {
+      this.socket.emit('typing_stop', this.currentChannel);
+    }, 2000);
+  }
+
+  showTypingIndicator(username) {
+    this.typingUsers[username] = true;
+    this.renderTypingIndicator();
+  }
+
+  removeTypingIndicator(username) {
+    delete this.typingUsers[username];
+    this.renderTypingIndicator();
+  }
+
+  renderTypingIndicator() {
+    const el = document.getElementById('typing-indicator');
+    if (!el) return;
+    const names = Object.keys(this.typingUsers);
+    if (names.length === 0) {
+      el.innerHTML = '';
+    } else if (names.length === 1) {
+      el.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span> <em>${names[0]} is typing...</em>`;
+    } else if (names.length === 2) {
+      el.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span> <em>${names[0]} and ${names[1]} are typing...</em>`;
+    } else {
+      el.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span> <em>Several people are typing...</em>`;
+    }
+  }
+
   sendMessage() {
     const input = document.getElementById('message-input');
     const text = input.value.trim();
 
     if (!text) return;
+
+    clearTimeout(this.typingTimeout);
+    this.socket.emit('typing_stop', this.currentChannel);
 
     this.socket.emit('send_message', {
       channel: this.currentChannel,
@@ -278,10 +326,11 @@ class SchoolChatApp {
     }
   }
 
-  updateActiveUsers() {
+  updateActiveUsers(count) {
     const activeDiv = document.getElementById('active-users');
     if (activeDiv) {
-      activeDiv.innerHTML = `<span class="online-indicator"></span> Users online`;
+      const label = count === 1 ? 'member online' : 'members online';
+      activeDiv.innerHTML = `<span class="online-indicator"></span> <strong>${count}</strong> ${label}`;
     }
   }
 
@@ -319,7 +368,7 @@ class SchoolChatApp {
             ${user.role === 'owner' ? '👑 Owner' : '👤 Student'}
           </div>
         </div>
-        ${user.role !== 'owner' ? `<button class="delete-user-btn" onclick="app.deleteUser(${user.id})">Delete</button>` : ''}
+        ${user.role !== 'owner' ? `<button class="delete-user-btn" onclick="chatApp.deleteUser(${user.id})">Delete</button>` : ''}
       </div>
     `).join('');
   }
@@ -412,4 +461,4 @@ class SchoolChatApp {
   }
 }
 
-const app = new SchoolChatApp();
+window.chatApp = new SchoolChatApp();
