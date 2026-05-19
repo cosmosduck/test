@@ -22,9 +22,6 @@ app.use(express.static('public'));
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_key';
 
-// Initialize database
-db.initializeDatabase();
-
 // Create owner account if it doesn't exist
 async function createOwnerAccount() {
   try {
@@ -188,7 +185,7 @@ io.on('connection', (socket) => {
 
   // Track active users
   activeUsers[userId] = { username, socketId: socket.id, role };
-  io.emit('user_online', { userId, username });
+  io.emit('user_online', { userId, username, count: Object.keys(activeUsers).length });
 
   console.log(`✅ ${username} connected`);
 
@@ -199,6 +196,15 @@ io.on('connection', (socket) => {
       username,
       message: `✨ ${username} joined #${channel}`
     });
+  });
+
+  // Typing indicator
+  socket.on('typing_start', (channel) => {
+    socket.to(channel).emit('user_typing', { username });
+  });
+
+  socket.on('typing_stop', (channel) => {
+    socket.to(channel).emit('user_stopped_typing', { username });
   });
 
   // Send message
@@ -235,15 +241,16 @@ io.on('connection', (socket) => {
   // User disconnect
   socket.on('disconnect', () => {
     delete activeUsers[userId];
-    io.emit('user_offline', { userId, username });
+    io.emit('user_offline', { userId, username, count: Object.keys(activeUsers).length });
     console.log(`❌ ${username} disconnected`);
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', async () => {
+  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
   console.log(`📊 Database: ${process.env.DATABASE_URL || 'Local PostgreSQL'}`);
-  createOwnerAccount();
+  await db.initializeDatabase();
+  await createOwnerAccount();
 });
 
 module.exports = app;
