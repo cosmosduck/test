@@ -1,8 +1,9 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Use Replit's built-in database URL if available, otherwise fall back to custom DATABASE_URL
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || process.env.REPLIT_DB_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
@@ -20,7 +21,7 @@ async function initializeDatabase() {
       );
     `);
 
-    // Create messages table
+    // Create messages table with persistent storage
     await pool.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -37,7 +38,12 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
     `);
 
-    console.log('✅ Database initialized successfully');
+    // Create index on created_at for sorting
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+    `);
+
+    console.log('✅ Database initialized successfully with persistent storage');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
   }
@@ -84,13 +90,22 @@ async function saveMessage(userId, username, channel, text) {
   return result.rows[0];
 }
 
-// Get messages by channel
+// Get messages by channel (retrieves all messages - they persist forever)
 async function getMessagesByChannel(channel, limit = 100) {
   const result = await pool.query(
-    'SELECT id, username, channel, text, created_at FROM messages WHERE channel = $1 ORDER BY created_at DESC LIMIT $2',
+    'SELECT id, username, channel, text, created_at FROM messages WHERE channel = $1 ORDER BY created_at ASC LIMIT $2',
     [channel, limit]
   );
-  return result.rows.reverse(); // Reverse to get oldest first
+  return result.rows;
+}
+
+// Get total message count for a channel
+async function getMessageCount(channel) {
+  const result = await pool.query(
+    'SELECT COUNT(*) FROM messages WHERE channel = $1',
+    [channel]
+  );
+  return parseInt(result.rows[0].count);
 }
 
 module.exports = {
@@ -102,5 +117,6 @@ module.exports = {
   getAllUsers,
   deleteUser,
   saveMessage,
-  getMessagesByChannel
+  getMessagesByChannel,
+  getMessageCount
 };
