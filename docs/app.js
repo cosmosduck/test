@@ -13,6 +13,8 @@ class SchoolChatApp {
     this.activeUsers = [];
     this.typingUsers = {};
     this.typingTimeout = null;
+    this.totalUnread = 0;
+    this.windowFocused = !document.hidden;
 
     if (this.token) {
       this.showChatApp();
@@ -155,6 +157,15 @@ class SchoolChatApp {
     if (Notification.permission === 'default') {
       Notification.requestPermission();
     }
+
+    window.addEventListener('focus', () => {
+      this.windowFocused = true;
+      this.totalUnread = 0;
+      this.updateTabBadge();
+    });
+    window.addEventListener('blur', () => {
+      this.windowFocused = false;
+    });
   }
 
   // ============ SOCKET.IO CONNECTION ============
@@ -177,6 +188,10 @@ class SchoolChatApp {
       this.messages[message.channel].push(message);
       if (message.channel === this.currentChannel) {
         this.displayMessage(message);
+        if (!this.windowFocused) {
+          this.totalUnread++;
+          this.updateTabBadge();
+        }
       } else {
         this.addNotification(message.channel);
       }
@@ -222,6 +237,8 @@ class SchoolChatApp {
   switchChannel(channel) {
     this.currentChannel = channel;
     this.notifications[channel] = 0;
+    this.totalUnread = Object.values(this.notifications).reduce((a, b) => a + b, 0);
+    this.updateTabBadge();
     this.refreshUI();
     this.socket.emit('join_channel', channel);
     this.loadMessages();
@@ -322,11 +339,55 @@ class SchoolChatApp {
 
   addNotification(channel) {
     this.notifications[channel]++;
+    this.totalUnread++;
+    this.updateTabBadge();
     const badge = document.getElementById(`${channel}-badge`);
     if (badge) {
       badge.textContent = this.notifications[channel];
       badge.style.display = 'flex';
     }
+  }
+
+  updateTabBadge() {
+    const count = this.totalUnread;
+    document.title = count > 0 ? `(${count}) School Chat` : 'School Chat';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#5865f2';
+    ctx.beginPath();
+    ctx.arc(16, 16, 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✉', 16, 17);
+
+    if (count > 0) {
+      ctx.fillStyle = '#f04747';
+      ctx.beginPath();
+      ctx.arc(25, 7, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 9px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(count > 9 ? '9+' : String(count), 25, 7);
+    }
+
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = canvas.toDataURL('image/png');
   }
 
   updateActiveUsers(count) {
