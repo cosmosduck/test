@@ -318,6 +318,41 @@ body {
   margin: 10px 0;
 }
 
+/* Typing indicator */
+.typing-indicator {
+  padding: 4px 20px 0;
+  font-size: 12px;
+  color: #72767d;
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  background: #72767d;
+  border-radius: 50%;
+  display: inline-block;
+  animation: typingBounce 1.2s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: 0s; }
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
 /* Input area */
 .input-area {
   padding: 20px;
