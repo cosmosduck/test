@@ -2,10 +2,10 @@ const BACKEND = 'https://test-kt8b.onrender.com';
 
 class SchoolChatApp {
   constructor() {
-    this.token = localStorage.getItem('token');
-    this.username = localStorage.getItem('username');
-    this.userId = localStorage.getItem('userId');
-    this.role = localStorage.getItem('role');
+    this.token = sessionStorage.getItem('token');
+    this.username = sessionStorage.getItem('username');
+    this.userId = sessionStorage.getItem('userId');
+    this.role = sessionStorage.getItem('role');
     this.currentChannel = 'general';
     this.socket = null;
     this.messages = { general: [], class: [] };
@@ -68,10 +68,10 @@ class SchoolChatApp {
       }
 
       const data = await response.json();
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('username', data.username);
-      localStorage.setItem('userId', data.userId);
-      localStorage.setItem('role', data.role);
+      sessionStorage.setItem('token', data.token);
+      sessionStorage.setItem('username', data.username);
+      sessionStorage.setItem('userId', data.userId);
+      sessionStorage.setItem('role', data.role);
 
       this.token = data.token;
       this.username = data.username;
@@ -458,7 +458,7 @@ class SchoolChatApp {
   }
 
   logout() {
-    localStorage.clear();
+    sessionStorage.clear();
     this.socket?.disconnect();
     this.showLoginPage();
   }
