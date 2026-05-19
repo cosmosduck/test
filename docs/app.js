@@ -62,7 +62,8 @@ class SchoolChatApp {
       });
 
       if (!response.ok) {
-        errorDiv.textContent = 'Invalid credentials';
+        const err = await response.json().catch(() => ({}));
+        errorDiv.textContent = err.error || `Server error (${response.status})`;
         return;
       }
 
