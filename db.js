@@ -1,9 +1,8 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Use Replit's built-in database URL if available, otherwise fall back to custom DATABASE_URL
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.REPLIT_DB_URL,
+  connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
@@ -21,7 +20,7 @@ async function initializeDatabase() {
       );
     `);
 
-    // Create messages table with persistent storage
+    // Create messages table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
@@ -38,12 +37,7 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
     `);
 
-    // Create index on created_at for sorting
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
-    `);
-
-    console.log('✅ Database initialized successfully with persistent storage');
+    console.log('✅ Database initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
   }
@@ -90,22 +84,13 @@ async function saveMessage(userId, username, channel, text) {
   return result.rows[0];
 }
 
-// Get messages by channel (retrieves all messages - they persist forever)
+// Get messages by channel
 async function getMessagesByChannel(channel, limit = 100) {
   const result = await pool.query(
-    'SELECT id, username, channel, text, created_at FROM messages WHERE channel = $1 ORDER BY created_at ASC LIMIT $2',
+    'SELECT id, username, channel, text, created_at FROM messages WHERE channel = $1 ORDER BY created_at DESC LIMIT $2',
     [channel, limit]
   );
-  return result.rows;
-}
-
-// Get total message count for a channel
-async function getMessageCount(channel) {
-  const result = await pool.query(
-    'SELECT COUNT(*) FROM messages WHERE channel = $1',
-    [channel]
-  );
-  return parseInt(result.rows[0].count);
+  return result.rows.reverse(); // Reverse to get oldest first
 }
 
 module.exports = {
@@ -117,6 +102,5 @@ module.exports = {
   getAllUsers,
   deleteUser,
   saveMessage,
-  getMessagesByChannel,
-  getMessageCount
+  getMessagesByChannel
 };
