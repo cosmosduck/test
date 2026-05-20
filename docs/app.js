@@ -15,6 +15,8 @@ class SchoolChatApp {
     this.typingTimeout = null;
     this.totalUnread = 0;
     this.windowFocused = !document.hidden;
+    this.idleTimeout = null;
+    this.IDLE_LIMIT = 30 * 60 * 1000; // 30 minutes
 
     if (this.token) {
       this.showChatApp();
@@ -241,6 +243,23 @@ class SchoolChatApp {
     window.addEventListener('blur', () => {
       this.windowFocused = false;
     });
+
+    this.startIdleTimer();
+  }
+
+  startIdleTimer() {
+    if (this.idleTimeout) clearTimeout(this.idleTimeout);
+    const reset = () => {
+      if (this.idleTimeout) clearTimeout(this.idleTimeout);
+      this.idleTimeout = setTimeout(() => {
+        alert('🔒 Logged out due to inactivity.');
+        this.logout();
+      }, this.IDLE_LIMIT);
+    };
+    ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(e => {
+      document.addEventListener(e, reset, { passive: true });
+    });
+    reset();
   }
 
   // ============ SOCKET.IO CONNECTION ============
@@ -607,6 +626,7 @@ class SchoolChatApp {
   }
 
   logout() {
+    if (this.idleTimeout) clearTimeout(this.idleTimeout);
     sessionStorage.clear();
     this.socket?.disconnect();
     this.showLoginPage();
