@@ -29,7 +29,7 @@ class SchoolChatApp {
     app.innerHTML = `
       <div class="login-page">
         <div class="login-box">
-          <h1>🎓 School Chat</h1>
+          <h1>🎓 Classroom</h1>
           <div id="error" class="error"></div>
           <div class="form-group">
             <label for="username">Username</label>
@@ -431,7 +431,7 @@ class SchoolChatApp {
 
   updateTabBadge() {
     const count = this.totalUnread;
-    document.title = count > 0 ? `(${count}) School Chat` : 'School Chat';
+    document.title = count > 0 ? `(${count}) Classroom` : '🎓 Classroom';
 
     const canvas = document.createElement('canvas');
     canvas.width = 32;
@@ -447,7 +447,7 @@ class SchoolChatApp {
     ctx.font = 'bold 16px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('✉', 16, 17);
+    ctx.fillText('🏫', 16, 17);
 
     if (count > 0) {
       ctx.fillStyle = '#f04747';
