@@ -70,6 +70,78 @@ class SchoolChatApp {
       }
 
       const data = await response.json();
+      this.preAuthToken = data.preAuthToken;
+      this.showPinScreen();
+    } catch (error) {
+      errorDiv.textContent = 'Login failed: ' + error.message;
+    }
+  }
+
+  showPinScreen() {
+    const app = document.getElementById('app');
+    app.innerHTML = `
+      <div class="login-page">
+        <div class="login-box">
+          <h1>🔒 Enter PIN</h1>
+          <p style="text-align:center;color:#aaa;margin-bottom:24px;font-size:14px;">Enter your 4-digit security code</p>
+          <div id="pin-error" class="error"></div>
+          <div class="pin-inputs">
+            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-0" oninput="chatApp.pinInput(0)" onkeydown="chatApp.pinKeydown(event,0)">
+            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-1" oninput="chatApp.pinInput(1)" onkeydown="chatApp.pinKeydown(event,1)">
+            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-2" oninput="chatApp.pinInput(2)" onkeydown="chatApp.pinKeydown(event,2)">
+            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-3" oninput="chatApp.pinInput(3)" onkeydown="chatApp.pinKeydown(event,3)">
+          </div>
+          <button class="login-btn" onclick="chatApp.verifyPin()" style="margin-top:24px;">Verify</button>
+          <button onclick="chatApp.showLoginPage()" style="width:100%;margin-top:10px;background:none;border:none;color:#aaa;cursor:pointer;font-size:13px;">← Back to login</button>
+        </div>
+      </div>
+    `;
+    window.chatApp = this;
+    document.getElementById('pin-0').focus();
+  }
+
+  pinInput(index) {
+    const input = document.getElementById(`pin-${index}`);
+    input.value = input.value.replace(/[^0-9]/g, '');
+    if (input.value && index < 3) {
+      document.getElementById(`pin-${index + 1}`).focus();
+    }
+    if (index === 3 && input.value) {
+      this.verifyPin();
+    }
+  }
+
+  pinKeydown(event, index) {
+    if (event.key === 'Backspace' && !document.getElementById(`pin-${index}`).value && index > 0) {
+      document.getElementById(`pin-${index - 1}`).focus();
+    }
+  }
+
+  async verifyPin() {
+    const pin = [0,1,2,3].map(i => document.getElementById(`pin-${i}`)?.value || '').join('');
+    const errorDiv = document.getElementById('pin-error');
+
+    if (pin.length !== 4) {
+      errorDiv.textContent = 'Please enter all 4 digits';
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND}/api/verify-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preAuthToken: this.preAuthToken, pin })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        errorDiv.textContent = err.error || 'Incorrect PIN';
+        [0,1,2,3].forEach(i => { const el = document.getElementById(`pin-${i}`); if(el) el.value = ''; });
+        document.getElementById('pin-0')?.focus();
+        return;
+      }
+
+      const data = await response.json();
       sessionStorage.setItem('token', data.token);
       sessionStorage.setItem('username', data.username);
       sessionStorage.setItem('userId', data.userId);
@@ -82,7 +154,7 @@ class SchoolChatApp {
 
       this.showChatApp();
     } catch (error) {
-      errorDiv.textContent = 'Login failed: ' + error.message;
+      document.getElementById('pin-error').textContent = 'Verification failed: ' + error.message;
     }
   }
 
@@ -139,6 +211,9 @@ class SchoolChatApp {
             </div>
             <div class="form-group-inline">
               <input type="password" id="new-password" placeholder="Password">
+            </div>
+            <div class="form-group-inline">
+              <input type="text" inputmode="numeric" id="new-pin" placeholder="4-digit PIN" maxlength="4">
             </div>
             <button class="btn btn-primary" onclick="chatApp.createUser()" style="width: 100%;">Create User</button>
           </div>
@@ -429,7 +504,7 @@ class SchoolChatApp {
         <div class="user-list-item-info">
           <div class="user-list-item-name">${user.username}</div>
           <div class="user-list-item-status">
-            ${user.role === 'owner' ? '👑 Owner' : '👤 Student'}
+            ${user.role === 'owner' ? '👑 Owner' : '👤 Student'} &nbsp;·&nbsp; PIN: ${user.pin_code ? '••••' : '⚠️ not set'}
           </div>
         </div>
         ${user.role !== 'owner' ? `<button class="delete-user-btn" onclick="chatApp.deleteUser(${user.id})">Delete</button>` : ''}
@@ -440,9 +515,15 @@ class SchoolChatApp {
   async createUser() {
     const username = document.getElementById('new-username').value;
     const password = document.getElementById('new-password').value;
+    const pinCode = document.getElementById('new-pin').value;
 
-    if (!username || !password) {
-      alert('Please fill in all fields');
+    if (!username || !password || !pinCode) {
+      alert('Please fill in all fields including the PIN');
+      return;
+    }
+
+    if (!/^\d{4}$/.test(pinCode)) {
+      alert('PIN must be exactly 4 digits');
       return;
     }
 
@@ -453,7 +534,7 @@ class SchoolChatApp {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.token}`
         },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, pinCode })
       });
 
       if (!response.ok) {
@@ -464,6 +545,7 @@ class SchoolChatApp {
 
       document.getElementById('new-username').value = '';
       document.getElementById('new-password').value = '';
+      document.getElementById('new-pin').value = '';
       alert(`✅ User "${username}" created successfully!`);
       this.loadUsers();
     } catch (error) {
