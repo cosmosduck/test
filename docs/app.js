@@ -205,23 +205,36 @@ class SchoolChatApp {
           <h2>⚙️ Admin Dashboard</h2>
           <button class="close-btn" onclick="chatApp.closeAdminPanel()">&times;</button>
         </div>
+        <div class="admin-tabs">
+          <div class="admin-tab active" onclick="chatApp.switchAdminTab('users')">👤 Users</div>
+          <div class="admin-tab" onclick="chatApp.switchAdminTab('logs')">🔒 Security Logs</div>
+        </div>
         <div class="admin-content">
-          <div class="admin-section">
-            <h3>Create New User</h3>
-            <div class="form-group-inline">
-              <input type="text" id="new-username" placeholder="Username">
+          <div class="admin-tab-panel active" id="tab-users">
+            <div class="admin-section">
+              <h3>Create New User</h3>
+              <div class="form-group-inline">
+                <input type="text" id="new-username" placeholder="Username">
+              </div>
+              <div class="form-group-inline">
+                <input type="password" id="new-password" placeholder="Password">
+              </div>
+              <div class="form-group-inline">
+                <input type="text" inputmode="numeric" id="new-pin" placeholder="4-digit PIN" maxlength="4">
+              </div>
+              <button class="btn btn-primary" onclick="chatApp.createUser()" style="width: 100%;">Create User</button>
             </div>
-            <div class="form-group-inline">
-              <input type="password" id="new-password" placeholder="Password">
+            <div class="admin-section">
+              <h3>Manage Users</h3>
+              <div id="user-list"></div>
             </div>
-            <div class="form-group-inline">
-              <input type="text" inputmode="numeric" id="new-pin" placeholder="4-digit PIN" maxlength="4">
-            </div>
-            <button class="btn btn-primary" onclick="chatApp.createUser()" style="width: 100%;">Create User</button>
           </div>
-          <div class="admin-section">
-            <h3>Manage Users</h3>
-            <div id="user-list"></div>
+          <div class="admin-tab-panel" id="tab-logs">
+            <div class="admin-section">
+              <h3>Security Logs</h3>
+              <button class="log-clear-btn" onclick="chatApp.clearLogs()">🗑 Clear All Logs</button>
+              <div id="security-log-list"><p style="color:#72767d">Loading...</p></div>
+            </div>
           </div>
         </div>
       </div>
@@ -506,6 +519,72 @@ class SchoolChatApp {
 
   closeAdminPanel() {
     document.getElementById('admin-panel').classList.remove('open');
+  }
+
+  switchAdminTab(tab) {
+    document.querySelectorAll('.admin-tab').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.admin-tab-panel').forEach(el => el.classList.remove('active'));
+    document.querySelector(`.admin-tab[onclick*="'${tab}'"]`).classList.add('active');
+    document.getElementById(`tab-${tab}`).classList.add('active');
+    if (tab === 'logs') this.loadLogs();
+  }
+
+  async loadLogs() {
+    const container = document.getElementById('security-log-list');
+    if (!container) return;
+    container.innerHTML = '<p style="color:#72767d">Loading...</p>';
+    try {
+      const response = await fetch(`${BACKEND}/api/admin/logs`, {
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      const logs = await response.json();
+      this.displayLogs(logs, container);
+    } catch (e) {
+      container.innerHTML = '<p style="color:#f04747">Failed to load logs.</p>';
+    }
+  }
+
+  displayLogs(logs, container) {
+    if (!logs.length) {
+      container.innerHTML = '<p style="color:#72767d">No activity yet.</p>';
+      return;
+    }
+    const badgeClass = e => {
+      if (e === 'login_success') return 'success';
+      if (e === 'login_fail' || e === 'pin_fail') return 'fail';
+      if (e === 'lockout') return 'warn';
+      return 'info';
+    };
+    const label = e => ({
+      login_success: '✅ Login OK',
+      login_fail: '❌ Login Fail',
+      login_pass_ok: '🔑 Pass OK',
+      pin_fail: '❌ PIN Fail',
+      lockout: '🚫 Locked Out',
+    }[e] || e);
+    container.innerHTML = logs.map(log => {
+      const time = new Date(log.created_at).toLocaleString();
+      return `<div class="log-entry">
+        <span class="log-badge ${badgeClass(log.event)}">${label(log.event)}</span>
+        <div>
+          <div><strong>${this.escapeHtml(log.username || '—')}</strong> &nbsp; ${this.escapeHtml(log.details || '')}</div>
+          <div class="log-meta">🕐 ${time} &nbsp;·&nbsp; IP: ${this.escapeHtml(log.ip || '—')}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async clearLogs() {
+    if (!confirm('Clear all security logs?')) return;
+    try {
+      await fetch(`${BACKEND}/api/admin/logs`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      this.loadLogs();
+    } catch (e) {
+      alert('Failed to clear logs');
+    }
   }
 
   async loadUsers() {
