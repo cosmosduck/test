@@ -21,6 +21,28 @@ app.use(express.static('public'));
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_key';
 
+// In-memory rate limiting
+const loginAttempts = new Map();
+const PIN_ATTEMPTS = 5;
+const PASS_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+function checkRateLimit(key, maxAttempts, res) {
+  const now = Date.now();
+  let record = loginAttempts.get(key);
+  if (!record || now > record.resetAt) {
+    record = { count: 0, resetAt: now + LOCKOUT_MINUTES * 60 * 1000 };
+  }
+  if (record.count >= maxAttempts) {
+    const minutesLeft = Math.ceil((record.resetAt - now) / 60000);
+    res.status(429).json({ error: `Too many attempts. Try again in ${minutesLeft} minutes.` });
+    return false;
+  }
+  record.count++;
+  loginAttempts.set(key, record);
+  return true;
+}
+
 async function createOwnerAccount() {
   try {
     const ownerUsername = process.env.OWNER_USERNAME || 'admin';
@@ -54,13 +76,16 @@ async function createOwnerAccount() {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
 
     const user = await db.getUserByUsername(username);
     if (!user) {
+      if (!checkRateLimit(`pass:${ip}`, PASS_ATTEMPTS, res)) return;
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     if (!bcrypt.compareSync(password, user.password_hash)) {
+      if (!checkRateLimit(`pass:${ip}:${username}`, PASS_ATTEMPTS, res)) return;
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -98,13 +123,15 @@ app.post('/api/verify-pin', async (req, res) => {
     }
 
     if (!user.pin_code || user.pin_code !== pin) {
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+      if (!checkRateLimit(`pin:${ip}:${user.id}`, PIN_ATTEMPTS, res)) return;
       return res.status(401).json({ error: 'Incorrect PIN' });
     }
 
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '12h' }
     );
 
     res.json({ token, username: user.username, role: user.role, userId: user.id });
