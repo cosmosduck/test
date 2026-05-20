@@ -245,7 +245,13 @@ class SchoolChatApp {
 
   // ============ SOCKET.IO CONNECTION ============
   connectSocket() {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
+    }
     this.socket = io(BACKEND, {
+      forceNew: true,
       auth: {
         token: this.token
       }
