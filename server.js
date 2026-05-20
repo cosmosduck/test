@@ -23,19 +23,25 @@ const JWT_SECRET = process.env.JWT_SECRET || 'secret_key';
 
 async function createOwnerAccount() {
   try {
-    const owner = await db.getUserByUsername(process.env.OWNER_USERNAME || 'admin');
+    const ownerUsername = process.env.OWNER_USERNAME || 'admin';
+    const ownerPassword = process.env.OWNER_PASSWORD || 'admin123';
+    const pinCode = process.env.OWNER_PIN || '0000';
+
+    const owner = await db.getUserByUsername(ownerUsername);
     if (!owner) {
-      const passwordHash = bcrypt.hashSync(process.env.OWNER_PASSWORD || 'admin123', 10);
-      const pinCode = process.env.OWNER_PIN || '0000';
+      const passwordHash = bcrypt.hashSync(ownerPassword, 10);
       await db.pool.query(
         'INSERT INTO users (username, password_hash, role, pin_code) VALUES ($1, $2, $3, $4)',
-        [process.env.OWNER_USERNAME || 'admin', passwordHash, 'owner', pinCode]
+        [ownerUsername, passwordHash, 'owner', pinCode]
       );
       console.log('✅ Owner account created');
-    } else if (!owner.pin_code) {
-      const pinCode = process.env.OWNER_PIN || '0000';
-      await db.pool.query('UPDATE users SET pin_code = $1 WHERE id = $2', [pinCode, owner.id]);
-      console.log('✅ Owner PIN set');
+    } else {
+      const passwordHash = bcrypt.hashSync(ownerPassword, 10);
+      await db.pool.query(
+        'UPDATE users SET password_hash = $1, pin_code = $2 WHERE id = $3',
+        [passwordHash, pinCode, owner.id]
+      );
+      console.log('✅ Owner credentials synced from env');
     }
   } catch (error) {
     console.error('Error creating owner account:', error);
