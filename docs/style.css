@@ -586,6 +586,10 @@ body {
 .ban-btn:hover   { background: #d63d3d; }
 .unban-btn { background: #43b581; }
 .unban-btn:hover { background: #3a9e6e; }
+.mute-btn  { background: #9b59b6; color: white; }
+.mute-btn:hover  { background: #8e44ad; }
+.unmute-btn { background: #43b581; }
+.unmute-btn:hover { background: #3a9e6e; }
 
 .banned-tag {
   display: inline-block;
@@ -598,6 +602,118 @@ body {
   vertical-align: middle;
   text-transform: uppercase;
 }
+
+.muted-tag {
+  display: inline-block;
+  background: #9b59b6;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+
+.mute-bar {
+  background: #9b59b622;
+  border-left: 3px solid #9b59b6;
+  color: #c39bd3;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  margin: 0 0 2px 0;
+}
+
+.mute-dur-select {
+  padding: 4px 6px;
+  background: #2c2f33;
+  border: 1px solid #4f545c;
+  border-radius: 3px;
+  color: #dcddde;
+  font-size: 11px;
+}
+
+/* Online user pills (clickable for owner) */
+.user-pill {
+  display: inline-block;
+  background: #4f545c33;
+  border: 1px solid #4f545c;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  margin: 0 2px;
+  transition: background 0.15s;
+}
+.user-pill:hover { background: #4f545c88; }
+
+/* Context menu popup */
+.user-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  background: #2c2f33;
+  border: 1px solid #4f545c;
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 180px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.ctx-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #4f545c;
+  color: #fff;
+}
+.ctx-close {
+  background: none;
+  border: none;
+  color: #72767d;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+.ctx-close:hover { color: #fff; }
+.ctx-btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: white;
+  text-align: left;
+}
+.ctx-kick  { background: #faa61a; color: #000; }
+.ctx-kick:hover  { background: #e09000; }
+.ctx-ban   { background: #f04747; }
+.ctx-ban:hover   { background: #d63d3d; }
+.ctx-mute  { background: #9b59b6; }
+.ctx-mute:hover  { background: #8e44ad; }
+.ctx-unmute { background: #43b581; }
+.ctx-unmute:hover { background: #3a9e6e; }
+.ctx-mute-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+  align-items: center;
+}
+.ctx-mute-row select {
+  flex: 1;
+  padding: 5px;
+  background: #23272a;
+  border: 1px solid #4f545c;
+  border-radius: 3px;
+  color: #dcddde;
+  font-size: 11px;
+}
+.ctx-mute-row .ctx-btn { margin-bottom: 0; flex-shrink: 0; width: auto; }
 
 .slowmode-control {
   display: flex;
