@@ -17,6 +17,9 @@ class SchoolChatApp {
     this.windowFocused = !document.hidden;
     this.idleTimeout = null;
     this.IDLE_LIMIT = 30 * 60 * 1000; // 30 minutes
+    this.slowmode = {};
+    this.lastSentAt = {};
+    this.slowCountdown = null;
 
     if (this.token) {
       this.showChatApp();
@@ -193,9 +196,10 @@ class SchoolChatApp {
           </div>
           <div class="messages-container" id="messages"></div>
           <div class="typing-indicator" id="typing-indicator"></div>
+          <div class="slowmode-bar" id="slowmode-bar" style="display:none"></div>
           <div class="input-area">
             <input type="text" id="message-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter') chatApp.sendMessage()" oninput="chatApp.handleTyping()">
-            <button class="send-btn" onclick="chatApp.sendMessage()">Send</button>
+            <button class="send-btn" id="send-btn" onclick="chatApp.sendMessage()">Send</button>
           </div>
         </div>
       </div>
@@ -211,6 +215,24 @@ class SchoolChatApp {
         </div>
         <div class="admin-content">
           <div class="admin-tab-panel active" id="tab-users">
+            <div class="admin-section">
+              <h3>🐢 Slowmode</h3>
+              <div class="slowmode-control">
+                <select id="slowmode-channel">
+                  <option value="general"># general</option>
+                  <option value="class"># class</option>
+                </select>
+                <select id="slowmode-seconds">
+                  <option value="0">Off</option>
+                  <option value="5">5 seconds</option>
+                  <option value="10">10 seconds</option>
+                  <option value="15">15 seconds</option>
+                  <option value="300">5 minutes</option>
+                </select>
+                <button class="btn btn-primary" onclick="chatApp.applySlowmode()">Apply</button>
+              </div>
+              <div id="slowmode-status" class="slowmode-status"></div>
+            </div>
             <div class="admin-section">
               <h3>Create New User</h3>
               <div class="form-group-inline">
@@ -345,6 +367,30 @@ class SchoolChatApp {
         }
       }
     });
+
+    this.socket.on('slowmode_init', (state) => {
+      this.slowmode = state || {};
+      this.updateSlowmodeBar();
+    });
+
+    this.socket.on('slowmode_update', (data) => {
+      this.slowmode[data.channel] = data.seconds;
+      this.updateSlowmodeBar();
+    });
+
+    this.socket.on('slowmode_blocked', (data) => {
+      this.startSlowCountdown(data.wait);
+    });
+
+    this.socket.on('kicked', (data) => {
+      alert('🚫 ' + (data.message || 'You have been kicked.'));
+      this.logout();
+    });
+
+    this.socket.on('banned', (data) => {
+      alert('⛔ ' + (data.message || 'You have been banned.'));
+      this.logout();
+    });
   }
 
   switchChannel(channel) {
@@ -436,18 +482,58 @@ class SchoolChatApp {
   sendMessage() {
     const input = document.getElementById('message-input');
     const text = input.value.trim();
-
     if (!text) return;
+
+    const slowSecs = this.slowmode[this.currentChannel] || 0;
+    if (slowSecs > 0 && this.role !== 'owner') {
+      const key = `${this.currentChannel}`;
+      const last = this.lastSentAt[key] || 0;
+      const elapsed = (Date.now() - last) / 1000;
+      if (elapsed < slowSecs) {
+        this.startSlowCountdown(Math.ceil(slowSecs - elapsed));
+        return;
+      }
+      this.lastSentAt[key] = Date.now();
+    }
 
     clearTimeout(this.typingTimeout);
     this.socket.emit('typing_stop', this.currentChannel);
-
-    this.socket.emit('send_message', {
-      channel: this.currentChannel,
-      text
-    });
-
+    this.socket.emit('send_message', { channel: this.currentChannel, text });
     input.value = '';
+  }
+
+  updateSlowmodeBar() {
+    const bar = document.getElementById('slowmode-bar');
+    if (!bar) return;
+    const secs = this.slowmode[this.currentChannel] || 0;
+    if (secs > 0) {
+      const label = secs >= 60 ? `${secs / 60} min` : `${secs}s`;
+      bar.style.display = 'block';
+      bar.textContent = `🐢 Slowmode: ${label} cooldown between messages`;
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  startSlowCountdown(seconds) {
+    if (this.slowCountdown) clearInterval(this.slowCountdown);
+    const btn = document.getElementById('send-btn');
+    const input = document.getElementById('message-input');
+    if (btn) btn.disabled = true;
+    if (input) input.disabled = true;
+    let left = seconds;
+    const update = () => { if (btn) btn.textContent = `Wait ${left}s`; };
+    update();
+    this.slowCountdown = setInterval(() => {
+      left--;
+      if (left <= 0) {
+        clearInterval(this.slowCountdown);
+        this.slowCountdown = null;
+        if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+        if (input) input.disabled = false;
+        this.lastSentAt[this.currentChannel] = Date.now() - (this.slowmode[this.currentChannel] || 0) * 1000;
+      } else { update(); }
+    }, 1000);
   }
 
   addNotification(channel) {
@@ -614,14 +700,69 @@ class SchoolChatApp {
     userList.innerHTML = users.map(user => `
       <div class="user-list-item">
         <div class="user-list-item-info">
-          <div class="user-list-item-name">${user.username}</div>
+          <div class="user-list-item-name">${user.username} ${user.banned ? '<span class="banned-tag">BANNED</span>' : ''}</div>
           <div class="user-list-item-status">
             ${user.role === 'owner' ? '👑 Owner' : '👤 Student'} &nbsp;·&nbsp; PIN: ${user.pin_code ? '••••' : '⚠️ not set'}
           </div>
         </div>
-        ${user.role !== 'owner' ? `<button class="delete-user-btn" onclick="chatApp.deleteUser(${user.id})">Delete</button>` : ''}
+        ${user.role !== 'owner' ? `
+          <div class="user-action-btns">
+            <button class="action-btn kick-btn" onclick="chatApp.kickUser(${user.id}, '${user.username}')">Kick</button>
+            ${user.banned
+              ? `<button class="action-btn unban-btn" onclick="chatApp.unbanUser(${user.id}, '${user.username}')">Unban</button>`
+              : `<button class="action-btn ban-btn" onclick="chatApp.banUser(${user.id}, '${user.username}')">Ban</button>`}
+            <button class="action-btn delete-user-btn" onclick="chatApp.deleteUser(${user.id})">Delete</button>
+          </div>
+        ` : ''}
       </div>
     `).join('');
+  }
+
+  async kickUser(userId, username) {
+    if (!confirm(`Kick ${username}? They will be disconnected but can log back in.`)) return;
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/users/${userId}/kick`, { method: 'POST', headers: { 'Authorization': `Bearer ${this.token}` } });
+      const d = await r.json();
+      alert(r.ok ? `✅ ${d.message}` : `❌ ${d.error}`);
+    } catch (e) { alert('Failed to kick user'); }
+  }
+
+  async banUser(userId, username) {
+    if (!confirm(`Ban ${username}? They will be disconnected and cannot log back in until unbanned.`)) return;
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/users/${userId}/ban`, { method: 'POST', headers: { 'Authorization': `Bearer ${this.token}` } });
+      const d = await r.json();
+      alert(r.ok ? `✅ ${d.message}` : `❌ ${d.error}`);
+      if (r.ok) this.loadUsers();
+    } catch (e) { alert('Failed to ban user'); }
+  }
+
+  async unbanUser(userId, username) {
+    if (!confirm(`Unban ${username}?`)) return;
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/users/${userId}/unban`, { method: 'POST', headers: { 'Authorization': `Bearer ${this.token}` } });
+      const d = await r.json();
+      alert(r.ok ? `✅ ${d.message}` : `❌ ${d.error}`);
+      if (r.ok) this.loadUsers();
+    } catch (e) { alert('Failed to unban user'); }
+  }
+
+  async applySlowmode() {
+    const channel = document.getElementById('slowmode-channel').value;
+    const seconds = parseInt(document.getElementById('slowmode-seconds').value);
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/slowmode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ channel, seconds })
+      });
+      const d = await r.json();
+      const statusEl = document.getElementById('slowmode-status');
+      if (statusEl) statusEl.textContent = r.ok ? `✅ ${d.message}` : `❌ ${d.error}`;
+    } catch (e) {
+      const statusEl = document.getElementById('slowmode-status');
+      if (statusEl) statusEl.textContent = '❌ Failed to apply slowmode';
+    }
   }
 
   async createUser() {
