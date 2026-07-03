@@ -206,8 +206,8 @@ class SchoolChatApp {
           <button class="close-btn" onclick="chatApp.closeAdminPanel()">&times;</button>
         </div>
         <div class="admin-tabs">
-          <div class="admin-tab active" onclick="chatApp.switchAdminTab('users')">👤 Users</div>
-          <div class="admin-tab" onclick="chatApp.switchAdminTab('logs')">🔒 Security Logs</div>
+          <div class="admin-tab active" data-tab="users" onclick="chatApp.switchAdminTab('users')">👤 Users</div>
+          <div class="admin-tab" data-tab="logs" onclick="chatApp.switchAdminTab('logs')">🔒 Security Logs</div>
         </div>
         <div class="admin-content">
           <div class="admin-tab-panel active" id="tab-users">
@@ -382,7 +382,7 @@ class SchoolChatApp {
     const messagesDiv = document.getElementById('messages');
     if (!messagesDiv || message.channel !== this.currentChannel) return;
 
-    const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const time = new Date(message.timestamp || message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const html = `
       <div class="message">
         <div class="message-avatar">${message.username.charAt(0).toUpperCase()}</div>
@@ -522,10 +522,10 @@ class SchoolChatApp {
   }
 
   switchAdminTab(tab) {
-    document.querySelectorAll('.admin-tab').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.admin-tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
     document.querySelectorAll('.admin-tab-panel').forEach(el => el.classList.remove('active'));
-    document.querySelector(`.admin-tab[onclick*="'${tab}'"]`).classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
+    const panel = document.getElementById(`tab-${tab}`);
+    if (panel) panel.classList.add('active');
     if (tab === 'logs') this.loadLogs();
   }
 
@@ -537,10 +537,18 @@ class SchoolChatApp {
       const response = await fetch(`${BACKEND}/api/admin/logs`, {
         headers: { 'Authorization': `Bearer ${this.token}` }
       });
+      if (!response.ok) {
+        container.innerHTML = `<p style="color:#f04747">Error ${response.status}: could not load logs.</p>`;
+        return;
+      }
       const logs = await response.json();
+      if (!Array.isArray(logs)) {
+        container.innerHTML = '<p style="color:#f04747">Unexpected response from server.</p>';
+        return;
+      }
       this.displayLogs(logs, container);
     } catch (e) {
-      container.innerHTML = '<p style="color:#f04747">Failed to load logs.</p>';
+      container.innerHTML = `<p style="color:#f04747">Failed to load logs: ${e.message}</p>`;
     }
   }
 
