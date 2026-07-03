@@ -20,6 +20,9 @@ class SchoolChatApp {
     this.slowmode = {};
     this.lastSentAt = {};
     this.slowCountdown = null;
+    this.isMuted = false;
+    this.muteExpiry = null;
+    this.onlineUsers = {};
 
     if (this.token) {
       this.showChatApp();
@@ -197,6 +200,7 @@ class SchoolChatApp {
           <div class="messages-container" id="messages"></div>
           <div class="typing-indicator" id="typing-indicator"></div>
           <div class="slowmode-bar" id="slowmode-bar" style="display:none"></div>
+          <div class="mute-bar" id="mute-bar" style="display:none"></div>
           <div class="input-area">
             <input type="text" id="message-input" placeholder="Type a message..." onkeypress="if(event.key==='Enter') chatApp.sendMessage()" oninput="chatApp.handleTyping()">
             <button class="send-btn" id="send-btn" onclick="chatApp.sendMessage()">Send</button>
@@ -340,12 +344,20 @@ class SchoolChatApp {
       }
     });
 
+    this.socket.on('active_users_list', (users) => {
+      this.onlineUsers = {};
+      users.forEach(u => { this.onlineUsers[u.userId] = u.username; });
+      this.renderActiveUsers();
+    });
+
     this.socket.on('user_online', (data) => {
-      this.updateActiveUsers(data.count);
+      this.onlineUsers[data.userId] = data.username;
+      this.renderActiveUsers();
     });
 
     this.socket.on('user_offline', (data) => {
-      this.updateActiveUsers(data.count);
+      delete this.onlineUsers[data.userId];
+      this.renderActiveUsers();
     });
 
     this.socket.on('user_typing', (data) => {
@@ -390,6 +402,22 @@ class SchoolChatApp {
     this.socket.on('banned', (data) => {
       alert('⛔ ' + (data.message || 'You have been banned.'));
       this.logout();
+    });
+
+    this.socket.on('mute_status', (data) => {
+      this.isMuted = data.muted;
+      this.muteExpiry = data.expiresAt;
+      this.updateMuteBar(data.message);
+    });
+
+    this.socket.on('unmuted', (data) => {
+      this.isMuted = false;
+      this.muteExpiry = null;
+      this.updateMuteBar(null);
+    });
+
+    this.socket.on('muted_blocked', (data) => {
+      this.updateMuteBar(data.message || '🔇 You are muted.');
     });
   }
 
@@ -484,6 +512,12 @@ class SchoolChatApp {
     const text = input.value.trim();
     if (!text) return;
 
+    if (this.isMuted && this.role !== 'owner') {
+      const msg = this.muteExpiry ? `🔇 You are muted until ${new Date(this.muteExpiry).toLocaleTimeString()}.` : '🔇 You are muted and cannot send messages.';
+      this.updateMuteBar(msg);
+      return;
+    }
+
     const slowSecs = this.slowmode[this.currentChannel] || 0;
     if (slowSecs > 0 && this.role !== 'owner') {
       const key = `${this.currentChannel}`;
@@ -500,6 +534,91 @@ class SchoolChatApp {
     this.socket.emit('typing_stop', this.currentChannel);
     this.socket.emit('send_message', { channel: this.currentChannel, text });
     input.value = '';
+  }
+
+  updateMuteBar(message) {
+    const bar = document.getElementById('mute-bar');
+    if (!bar) return;
+    if (message) { bar.style.display = 'block'; bar.textContent = message; }
+    else { bar.style.display = 'none'; }
+  }
+
+  renderActiveUsers() {
+    const el = document.getElementById('active-users');
+    if (!el) return;
+    const users = Object.entries(this.onlineUsers);
+    const count = users.length;
+    if (this.role === 'owner' && count > 0) {
+      const pills = users.map(([uid, name]) =>
+        `<span class="user-pill" onclick="chatApp.showUserContextMenu(${uid},'${name}',this)">${name}</span>`
+      ).join('');
+      el.innerHTML = `<span class="online-indicator"></span> <strong>${count}</strong> online: ${pills}`;
+    } else {
+      const label = count === 1 ? 'member online' : 'members online';
+      el.innerHTML = `<span class="online-indicator"></span> <strong>${count}</strong> ${label}`;
+    }
+  }
+
+  showUserContextMenu(userId, username, el) {
+    this.closeUserContextMenu();
+    const menu = document.createElement('div');
+    menu.id = 'user-ctx-menu';
+    menu.className = 'user-ctx-menu';
+    menu.innerHTML = `
+      <div class="ctx-header"><strong>${username}</strong> <button class="ctx-close" onclick="chatApp.closeUserContextMenu()">✕</button></div>
+      <button class="ctx-btn ctx-kick" onclick="chatApp.kickUser(${userId},'${username}');chatApp.closeUserContextMenu()">🥾 Kick</button>
+      <button class="ctx-btn ctx-ban"  onclick="chatApp.banUser(${userId},'${username}');chatApp.closeUserContextMenu()">⛔ Ban</button>
+      <div class="ctx-mute-row">
+        <select id="ctx-mute-dur">
+          <option value="0">Permanent</option>
+          <option value="60">1 min</option>
+          <option value="300">5 min</option>
+          <option value="600">10 min</option>
+          <option value="1800">30 min</option>
+          <option value="3600">1 hour</option>
+        </select>
+        <button class="ctx-btn ctx-mute" onclick="chatApp.adminMuteUser(${userId},'${username}',document.getElementById('ctx-mute-dur').value);chatApp.closeUserContextMenu()">🔇 Mute</button>
+      </div>
+      <button class="ctx-btn ctx-unmute" onclick="chatApp.adminUnmuteUser(${userId},'${username}');chatApp.closeUserContextMenu()">🔊 Unmute</button>
+    `;
+    const rect = el.getBoundingClientRect();
+    menu.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    menu.style.left = (rect.left + window.scrollX) + 'px';
+    document.body.appendChild(menu);
+    setTimeout(() => document.addEventListener('click', this._ctxOutside = (e) => {
+      if (!menu.contains(e.target) && e.target !== el) this.closeUserContextMenu();
+    }), 0);
+  }
+
+  closeUserContextMenu() {
+    const m = document.getElementById('user-ctx-menu');
+    if (m) m.remove();
+    if (this._ctxOutside) { document.removeEventListener('click', this._ctxOutside); this._ctxOutside = null; }
+  }
+
+  async adminMuteUser(userId, username, duration) {
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/users/${userId}/mute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ duration: parseInt(duration) })
+      });
+      const d = await r.json();
+      alert(r.ok ? `✅ ${d.message}` : `❌ ${d.error}`);
+      if (r.ok) this.loadUsers();
+    } catch (e) { alert('Failed to mute user'); }
+  }
+
+  async adminUnmuteUser(userId, username) {
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/users/${userId}/unmute`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.token}` }
+      });
+      const d = await r.json();
+      alert(r.ok ? `✅ ${d.message}` : `❌ ${d.error}`);
+      if (r.ok) this.loadUsers();
+    } catch (e) { alert('Failed to unmute user'); }
   }
 
   updateSlowmodeBar() {
@@ -590,11 +709,7 @@ class SchoolChatApp {
   }
 
   updateActiveUsers(count) {
-    const activeDiv = document.getElementById('active-users');
-    if (activeDiv) {
-      const label = count === 1 ? 'member online' : 'members online';
-      activeDiv.innerHTML = `<span class="online-indicator"></span> <strong>${count}</strong> ${label}`;
-    }
+    this.renderActiveUsers();
   }
 
   // ============ ADMIN PANEL ============
@@ -700,7 +815,11 @@ class SchoolChatApp {
     userList.innerHTML = users.map(user => `
       <div class="user-list-item">
         <div class="user-list-item-info">
-          <div class="user-list-item-name">${user.username} ${user.banned ? '<span class="banned-tag">BANNED</span>' : ''}</div>
+          <div class="user-list-item-name">
+            ${user.username}
+            ${user.banned ? '<span class="banned-tag">BANNED</span>' : ''}
+            ${user.muted ? '<span class="muted-tag">MUTED</span>' : ''}
+          </div>
           <div class="user-list-item-status">
             ${user.role === 'owner' ? '👑 Owner' : '👤 Student'} &nbsp;·&nbsp; PIN: ${user.pin_code ? '••••' : '⚠️ not set'}
           </div>
@@ -711,6 +830,17 @@ class SchoolChatApp {
             ${user.banned
               ? `<button class="action-btn unban-btn" onclick="chatApp.unbanUser(${user.id}, '${user.username}')">Unban</button>`
               : `<button class="action-btn ban-btn" onclick="chatApp.banUser(${user.id}, '${user.username}')">Ban</button>`}
+            ${user.muted
+              ? `<button class="action-btn unmute-btn" onclick="chatApp.adminUnmuteUser(${user.id}, '${user.username}')">Unmute</button>`
+              : `<select class="mute-dur-select" id="mute-dur-${user.id}">
+                  <option value="0">Permanent</option>
+                  <option value="60">1 min</option>
+                  <option value="300">5 min</option>
+                  <option value="600">10 min</option>
+                  <option value="1800">30 min</option>
+                  <option value="3600">1 hr</option>
+                </select>
+                <button class="action-btn mute-btn" onclick="chatApp.adminMuteUser(${user.id},'${user.username}',document.getElementById('mute-dur-${user.id}').value)">Mute</button>`}
             <button class="action-btn delete-user-btn" onclick="chatApp.deleteUser(${user.id})">Delete</button>
           </div>
         ` : ''}
