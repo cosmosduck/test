@@ -382,7 +382,7 @@ class SchoolChatApp {
     const messagesDiv = document.getElementById('messages');
     if (!messagesDiv || message.channel !== this.currentChannel) return;
 
-    const time = new Date(message.timestamp || message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const time = new Date(message.timestamp || message.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const html = `
       <div class="message">
         <div class="message-avatar">${message.username.charAt(0).toUpperCase()}</div>
