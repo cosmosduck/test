@@ -563,6 +563,75 @@ body {
 }
 .log-clear-btn:hover { background: #d63d3d; }
 
+/* ============ KICK / BAN / SLOWMODE ============ */
+.user-action-btns {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+}
+
+.kick-btn  { background: #faa61a; color: #000; }
+.kick-btn:hover  { background: #e09000; }
+.ban-btn   { background: #f04747; }
+.ban-btn:hover   { background: #d63d3d; }
+.unban-btn { background: #43b581; }
+.unban-btn:hover { background: #3a9e6e; }
+
+.banned-tag {
+  display: inline-block;
+  background: #f04747;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+
+.slowmode-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.slowmode-control select {
+  flex: 1;
+  padding: 8px;
+  background: var(--darker);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--light);
+  font-size: 13px;
+}
+
+.slowmode-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #72767d;
+}
+
+.slowmode-bar {
+  background: #faa61a22;
+  border-left: 3px solid #faa61a;
+  color: #faa61a;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  margin: 0 0 2px 0;
+}
+
 /* ============ PIN INPUT ============ */
 .pin-inputs {
   display: flex;
