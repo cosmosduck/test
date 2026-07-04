@@ -27,6 +27,45 @@ const PIN_ATTEMPTS = 5;
 const PASS_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
+// In-memory slowmode state (loaded from DB on startup)
+const slowmode = {};         // { channel: seconds }
+const lastMessageAt = {};    // { userId_channel: timestamp }
+
+// In-memory mute state (loaded from DB on startup)
+const mutedUsers = {};       // { userId: expiresAt_ms | Infinity }
+const muteTimers = {};       // { userId: timeoutHandle }
+
+function isUserMuted(userId) {
+  const exp = mutedUsers[userId];
+  if (exp === undefined) return false;
+  if (exp === Infinity) return true;
+  if (Date.now() < exp) return true;
+  delete mutedUsers[userId];
+  delete muteTimers[userId];
+  db.unmuteUser(userId).catch(() => {});
+  return false;
+}
+
+function applyMuteMemory(userId, durationMs) {
+  if (muteTimers[userId]) clearTimeout(muteTimers[userId]);
+  if (durationMs === 0) {
+    mutedUsers[userId] = Infinity;
+  } else {
+    const expiresAt = Date.now() + durationMs;
+    mutedUsers[userId] = expiresAt;
+    muteTimers[userId] = setTimeout(() => {
+      delete mutedUsers[userId];
+      delete muteTimers[userId];
+      db.unmuteUser(userId).catch(() => {});
+      const active = activeUsers[userId];
+      if (active) {
+        const sock = io.sockets.sockets.get(active.socketId);
+        if (sock) sock.emit('unmuted', { message: 'Your timeout has expired. You can chat again.' });
+      }
+    }, durationMs);
+  }
+}
+
 function checkRateLimit(key, maxAttempts, res) {
   const now = Date.now();
   let record = loginAttempts.get(key);
@@ -80,14 +119,25 @@ app.post('/api/login', async (req, res) => {
 
     const user = await db.getUserByUsername(username);
     if (!user) {
-      if (!checkRateLimit(`pass:${ip}`, PASS_ATTEMPTS, res)) return;
+      const allowed = checkRateLimit(`pass:${ip}`, PASS_ATTEMPTS, res);
+      await db.addSecurityLog('login_fail', username || '(unknown)', ip, 'User not found');
+      if (!allowed) { await db.addSecurityLog('lockout', username || '(unknown)', ip, 'Too many failed attempts'); return; }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (user.banned) {
+      await db.addSecurityLog('login_fail', username, ip, 'Banned account tried to log in');
+      return res.status(403).json({ error: 'This account has been banned.' });
+    }
+
     if (!bcrypt.compareSync(password, user.password_hash)) {
-      if (!checkRateLimit(`pass:${ip}:${username}`, PASS_ATTEMPTS, res)) return;
+      const allowed = checkRateLimit(`pass:${ip}:${username}`, PASS_ATTEMPTS, res);
+      await db.addSecurityLog('login_fail', username, ip, 'Wrong password');
+      if (!allowed) { await db.addSecurityLog('lockout', username, ip, 'Too many failed attempts'); return; }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+
+    await db.addSecurityLog('login_pass_ok', username, ip, 'Password accepted, awaiting PIN');
 
     const preAuthToken = jwt.sign(
       { userId: user.id, step: 'verify_pin' },
@@ -122,11 +172,16 @@ app.post('/api/verify-pin', async (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
 
+    const ip2 = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+
     if (!user.pin_code || user.pin_code !== pin) {
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
-      if (!checkRateLimit(`pin:${ip}:${user.id}`, PIN_ATTEMPTS, res)) return;
+      const allowed = checkRateLimit(`pin:${ip2}:${user.id}`, PIN_ATTEMPTS, res);
+      await db.addSecurityLog('pin_fail', user.username, ip2, 'Wrong PIN entered');
+      if (!allowed) { await db.addSecurityLog('lockout', user.username, ip2, 'Too many wrong PINs'); return; }
       return res.status(401).json({ error: 'Incorrect PIN' });
     }
+
+    await db.addSecurityLog('login_success', user.username, ip2, 'Logged in successfully');
 
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },
@@ -164,6 +219,11 @@ app.get('/api/messages/:channel', verifyToken, async (req, res) => {
   }
 });
 
+// Get current slowmode settings
+app.get('/api/slowmode', verifyToken, (req, res) => {
+  res.json(slowmode);
+});
+
 // ============ OWNER DASHBOARD ROUTES ============
 
 function isOwner(req, res, next) {
@@ -176,7 +236,12 @@ function isOwner(req, res, next) {
 app.get('/api/admin/users', verifyToken, isOwner, async (req, res) => {
   try {
     const users = await db.getAllUsers();
-    res.json(users);
+    const result = users.map(u => ({
+      ...u,
+      muted: isUserMuted(u.id),
+      muteExpiry: mutedUsers[u.id] === Infinity ? null : (mutedUsers[u.id] || null)
+    }));
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to get users' });
   }
@@ -208,6 +273,24 @@ app.post('/api/admin/users', verifyToken, isOwner, async (req, res) => {
   }
 });
 
+app.get('/api/admin/logs', verifyToken, isOwner, async (req, res) => {
+  try {
+    const logs = await db.getSecurityLogs(200);
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get logs' });
+  }
+});
+
+app.delete('/api/admin/logs', verifyToken, isOwner, async (req, res) => {
+  try {
+    await db.pool.query('DELETE FROM security_logs');
+    res.json({ message: 'Logs cleared' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to clear logs' });
+  }
+});
+
 app.delete('/api/admin/users/:userId', verifyToken, isOwner, async (req, res) => {
   try {
     const userId = parseInt(req.params.userId);
@@ -222,14 +305,153 @@ app.delete('/api/admin/users/:userId', verifyToken, isOwner, async (req, res) =>
   }
 });
 
+// Kick a user (disconnect their socket)
+app.post('/api/admin/users/:userId/kick', verifyToken, isOwner, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const user = await db.getUserById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'owner') return res.status(400).json({ error: 'Cannot kick owner' });
+
+    const active = activeUsers[userId];
+    if (active) {
+      const socket = io.sockets.sockets.get(active.socketId);
+      if (socket) {
+        socket.emit('kicked', { message: 'You have been kicked by the admin.' });
+        socket.disconnect(true);
+      }
+    }
+    await db.addSecurityLog('kick', user.username, null, `Kicked by owner`);
+    res.json({ message: `${user.username} kicked` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to kick user' });
+  }
+});
+
+// Ban a user (kick + mark banned in DB)
+app.post('/api/admin/users/:userId/ban', verifyToken, isOwner, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const user = await db.getUserById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'owner') return res.status(400).json({ error: 'Cannot ban owner' });
+
+    await db.banUser(userId);
+
+    const active = activeUsers[userId];
+    if (active) {
+      const socket = io.sockets.sockets.get(active.socketId);
+      if (socket) {
+        socket.emit('banned', { message: 'You have been banned.' });
+        socket.disconnect(true);
+      }
+    }
+    await db.addSecurityLog('ban', user.username, null, `Banned by owner`);
+    res.json({ message: `${user.username} banned` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to ban user' });
+  }
+});
+
+// Unban a user
+app.post('/api/admin/users/:userId/unban', verifyToken, isOwner, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const user = await db.getUserById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    await db.unbanUser(userId);
+    await db.addSecurityLog('unban', user.username, null, `Unbanned by owner`);
+    res.json({ message: `${user.username} unbanned` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unban user' });
+  }
+});
+
+// Mute / timeout a user
+app.post('/api/admin/users/:userId/mute', verifyToken, isOwner, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const duration = parseInt(req.body.duration) || 0; // seconds; 0 = permanent
+    const user = await db.getUserById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'owner') return res.status(400).json({ error: 'Cannot mute owner' });
+
+    const durationMs = duration * 1000;
+    applyMuteMemory(userId, durationMs);
+    const expiresAt = durationMs ? new Date(Date.now() + durationMs) : null;
+    await db.muteUser(userId, expiresAt);
+
+    const active = activeUsers[userId];
+    if (active) {
+      const sock = io.sockets.sockets.get(active.socketId);
+      if (sock) {
+        const label = duration ? `for ${duration >= 3600 ? duration/3600 + 'h' : duration >= 60 ? duration/60 + ' min' : duration + 's'}` : 'permanently';
+        sock.emit('mute_status', {
+          muted: true,
+          expiresAt: mutedUsers[userId] === Infinity ? null : mutedUsers[userId],
+          message: `🔇 You have been muted ${label}.`
+        });
+      }
+    }
+
+    const label = duration ? `${duration}s timeout` : 'permanent mute';
+    await db.addSecurityLog('mute', user.username, null, `${label} by owner`);
+    res.json({ message: `${user.username} muted (${label})` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mute user' });
+  }
+});
+
+// Unmute a user
+app.post('/api/admin/users/:userId/unmute', verifyToken, isOwner, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    const user = await db.getUserById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (muteTimers[userId]) clearTimeout(muteTimers[userId]);
+    delete mutedUsers[userId];
+    delete muteTimers[userId];
+    await db.unmuteUser(userId);
+
+    const active = activeUsers[userId];
+    if (active) {
+      const sock = io.sockets.sockets.get(active.socketId);
+      if (sock) sock.emit('unmuted', { message: '🔊 You have been unmuted.' });
+    }
+
+    await db.addSecurityLog('unmute', user.username, null, `Unmuted by owner`);
+    res.json({ message: `${user.username} unmuted` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unmute user' });
+  }
+});
+
+// Set slowmode for a channel
+app.post('/api/admin/slowmode', verifyToken, isOwner, (req, res) => {
+  const { channel, seconds } = req.body;
+  const secs = parseInt(seconds) || 0;
+  if (!channel) return res.status(400).json({ error: 'Channel required' });
+  slowmode[channel] = secs;
+  db.setSlowmode(channel, secs).catch(err => console.error('slowmode db:', err.message));
+  io.emit('slowmode_update', { channel, seconds: secs });
+  res.json({ message: `Slowmode set to ${secs}s for #${channel}` });
+});
+
 // ============ SOCKET.IO REAL-TIME CHAT ============
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const token = socket.handshake.auth.token;
   try {
     const user = jwt.verify(token, JWT_SECRET);
     if (user.step === 'verify_pin') {
       return next(new Error('Authentication failed'));
+    }
+    // Check if user is banned
+    const dbUser = await db.getUserById(user.userId);
+    if (!dbUser || dbUser.banned) {
+      return next(new Error('Account banned'));
     }
     socket.user = user;
     next();
@@ -247,6 +469,24 @@ io.on('connection', (socket) => {
 
   activeUsers[userId] = { username, socketId: socket.id, role };
   io.emit('user_online', { userId, username, count: Object.keys(activeUsers).length });
+
+  // Send current slowmode state to this client
+  socket.emit('slowmode_init', slowmode);
+
+  // Send full active users list to this new client
+  socket.emit('active_users_list', Object.entries(activeUsers).map(([uid, data]) => ({
+    userId: parseInt(uid), username: data.username
+  })));
+
+  // Send mute status if this user is muted
+  if (isUserMuted(userId)) {
+    const exp = mutedUsers[userId];
+    socket.emit('mute_status', {
+      muted: true,
+      expiresAt: exp === Infinity ? null : exp,
+      message: exp === Infinity ? '🔇 You are permanently muted.' : `🔇 You are muted until ${new Date(exp).toLocaleTimeString()}.`
+    });
+  }
 
   console.log(`✅ ${username} connected`);
 
@@ -269,6 +509,30 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { channel, text } = data;
+
+      // Enforce mute server-side
+      if (isUserMuted(userId) && role !== 'owner') {
+        const exp = mutedUsers[userId];
+        socket.emit('muted_blocked', {
+          message: exp === Infinity ? '🔇 You are muted and cannot send messages.' : `🔇 You are muted until ${new Date(exp).toLocaleTimeString()}.`
+        });
+        return;
+      }
+
+      // Enforce slowmode server-side
+      const slowSecs = slowmode[channel] || 0;
+      if (slowSecs > 0 && role !== 'owner') {
+        const key = `${userId}_${channel}`;
+        const last = lastMessageAt[key] || 0;
+        const elapsed = (Date.now() - last) / 1000;
+        if (elapsed < slowSecs) {
+          const wait = Math.ceil(slowSecs - elapsed);
+          socket.emit('slowmode_blocked', { channel, wait });
+          return;
+        }
+        lastMessageAt[key] = Date.now();
+      }
+
       const savedMessage = await db.saveMessage(userId, username, channel, text);
       const message = {
         id: savedMessage.id,
@@ -291,7 +555,7 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     delete activeUsers[userId];
-    io.emit('user_offline', { userId, username, count: Object.keys(activeUsers).length });
+    io.emit('user_offline', { userId, count: Object.keys(activeUsers).length });
     console.log(`❌ ${username} disconnected`);
   });
 });
@@ -300,6 +564,38 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
   await db.initializeDatabase();
   await createOwnerAccount();
+  // Load slowmode settings from DB
+  try {
+    const rows = await db.getSlowmodes();
+    rows.forEach(r => { slowmode[r.channel] = r.seconds; });
+    console.log('✅ Slowmode settings loaded');
+  } catch (e) {
+    console.log('⚠️ Could not load slowmode settings');
+  }
+  // Load muted users from DB
+  try {
+    const mutes = await db.getMutedUsers();
+    const now = Date.now();
+    mutes.forEach(m => {
+      const exp = m.expires_at ? new Date(m.expires_at).getTime() : Infinity;
+      if (exp === Infinity || exp > now) {
+        mutedUsers[m.user_id] = exp;
+        if (exp !== Infinity) {
+          const remaining = exp - now;
+          muteTimers[m.user_id] = setTimeout(() => {
+            delete mutedUsers[m.user_id];
+            delete muteTimers[m.user_id];
+            db.unmuteUser(m.user_id).catch(() => {});
+          }, remaining);
+        }
+      } else {
+        db.unmuteUser(m.user_id).catch(() => {});
+      }
+    });
+    console.log('✅ Mute state loaded');
+  } catch (e) {
+    console.log('⚠️ Could not load mute state');
+  }
 });
 
 module.exports = app;
