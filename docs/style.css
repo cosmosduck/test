@@ -135,6 +135,7 @@ body {
   padding: 8px 16px;
   border-radius: var(--radius-pill);
 }
+.error:empty { display: none; }
 
 /* ============ MAIN CHAT APP ============ */
 .chat-app {
