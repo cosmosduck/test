@@ -47,7 +47,7 @@ class SchoolChatApp {
             <label for="password">Password</label>
             <input type="password" id="password" placeholder="Enter your password">
           </div>
-          <button class="login-btn" onclick="chatApp.login()">Login</button>
+          <button type="button" class="login-btn" onclick="chatApp.login()">Login</button>
         </div>
       </div>
     `;
@@ -91,16 +91,16 @@ class SchoolChatApp {
       <div class="login-page">
         <div class="login-box">
           <h1>🔒 Enter PIN</h1>
-          <p style="text-align:center;color:#aaa;margin-bottom:24px;font-size:14px;">Enter your 4-digit security code</p>
+          <p style="text-align:center;color:#7b7fa8;margin-bottom:24px;font-size:13px;">Enter your 4-digit security code</p>
           <div id="pin-error" class="error"></div>
           <div class="pin-inputs">
-            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-0" oninput="chatApp.pinInput(0)" onkeydown="chatApp.pinKeydown(event,0)">
-            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-1" oninput="chatApp.pinInput(1)" onkeydown="chatApp.pinKeydown(event,1)">
-            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-2" oninput="chatApp.pinInput(2)" onkeydown="chatApp.pinKeydown(event,2)">
-            <input type="password" inputmode="numeric" maxlength="1" class="pin-digit" id="pin-3" oninput="chatApp.pinInput(3)" onkeydown="chatApp.pinKeydown(event,3)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-0" onkeyup="chatApp.pinInput(event,0)" onkeydown="chatApp.pinKeydown(event,0)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-1" onkeyup="chatApp.pinInput(event,1)" onkeydown="chatApp.pinKeydown(event,1)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-2" onkeyup="chatApp.pinInput(event,2)" onkeydown="chatApp.pinKeydown(event,2)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-3" onkeyup="chatApp.pinInput(event,3)" onkeydown="chatApp.pinKeydown(event,3)">
           </div>
-          <button class="login-btn" onclick="chatApp.verifyPin()" style="margin-top:24px;">Verify</button>
-          <button onclick="chatApp.showLoginPage()" style="width:100%;margin-top:10px;background:none;border:none;color:#aaa;cursor:pointer;font-size:13px;">← Back to login</button>
+          <button type="button" class="login-btn" onclick="chatApp.verifyPin()" style="margin-top:24px;">Verify PIN</button>
+          <button type="button" onclick="chatApp.showLoginPage()" style="width:100%;margin-top:10px;background:none;border:none;color:#7b7fa8;cursor:pointer;font-size:13px;font-family:Poppins,sans-serif;">← Back to login</button>
         </div>
       </div>
     `;
@@ -108,20 +108,24 @@ class SchoolChatApp {
     document.getElementById('pin-0').focus();
   }
 
-  pinInput(index) {
+  pinInput(event, index) {
     const input = document.getElementById(`pin-${index}`);
-    input.value = input.value.replace(/[^0-9]/g, '');
-    if (input.value && index < 3) {
+    input.value = input.value.replace(/[^0-9]/g, '').slice(0, 1);
+    if (input.value && index < 3 && event.key !== 'Backspace' && event.key !== 'Delete') {
       document.getElementById(`pin-${index + 1}`).focus();
-    }
-    if (index === 3 && input.value) {
-      this.verifyPin();
     }
   }
 
   pinKeydown(event, index) {
-    if (event.key === 'Backspace' && !document.getElementById(`pin-${index}`).value && index > 0) {
-      document.getElementById(`pin-${index - 1}`).focus();
+    if (event.key === 'Backspace') {
+      const input = document.getElementById(`pin-${index}`);
+      if (!input.value && index > 0) {
+        document.getElementById(`pin-${index - 1}`).focus();
+      }
+      return;
+    }
+    if (event.key === 'Enter') {
+      this.verifyPin();
     }
   }
 
@@ -220,20 +224,18 @@ class SchoolChatApp {
         <div class="admin-content">
           <div class="admin-tab-panel active" id="tab-users">
             <div class="admin-section">
-              <h3>🐢 Slowmode</h3>
+              <h3>🐢 Slowmode (All Channels)</h3>
               <div class="slowmode-control">
-                <select id="slowmode-channel">
-                  <option value="general"># general</option>
-                  <option value="class"># class</option>
-                </select>
                 <select id="slowmode-seconds">
                   <option value="0">Off</option>
                   <option value="5">5 seconds</option>
                   <option value="10">10 seconds</option>
                   <option value="15">15 seconds</option>
+                  <option value="30">30 seconds</option>
+                  <option value="60">1 minute</option>
                   <option value="300">5 minutes</option>
                 </select>
-                <button class="btn btn-primary" onclick="chatApp.applySlowmode()">Apply</button>
+                <button type="button" class="btn btn-primary" onclick="chatApp.applySlowmode()">Apply to All</button>
               </div>
               <div id="slowmode-status" class="slowmode-status"></div>
             </div>
@@ -549,10 +551,15 @@ class SchoolChatApp {
     const users = Object.entries(this.onlineUsers);
     const count = users.length;
     if (this.role === 'owner' && count > 0) {
-      const pills = users.map(([uid, name]) =>
-        `<span class="user-pill" onclick="chatApp.showUserContextMenu(${uid},'${name}',this)">${name}</span>`
-      ).join('');
-      el.innerHTML = `<span class="online-indicator"></span> <strong>${count}</strong> online: ${pills}`;
+      const others = users.filter(([uid]) => parseInt(uid) !== parseInt(this.userId));
+      let html = `<span class="online-indicator"></span> <strong>${count}</strong> online`;
+      if (others.length > 0) {
+        const pills = others.map(([uid, name]) =>
+          `<span class="user-pill" onclick="chatApp.showUserContextMenu(${uid},'${name}',this)">${name}</span>`
+        ).join('');
+        html += `: ${pills}`;
+      }
+      el.innerHTML = html;
     } else {
       const label = count === 1 ? 'member online' : 'members online';
       el.innerHTML = `<span class="online-indicator"></span> <strong>${count}</strong> ${label}`;
@@ -565,9 +572,9 @@ class SchoolChatApp {
     menu.id = 'user-ctx-menu';
     menu.className = 'user-ctx-menu';
     menu.innerHTML = `
-      <div class="ctx-header"><strong>${username}</strong> <button class="ctx-close" onclick="chatApp.closeUserContextMenu()">✕</button></div>
-      <button class="ctx-btn ctx-kick" onclick="chatApp.kickUser(${userId},'${username}');chatApp.closeUserContextMenu()">🥾 Kick</button>
-      <button class="ctx-btn ctx-ban"  onclick="chatApp.banUser(${userId},'${username}');chatApp.closeUserContextMenu()">⛔ Ban</button>
+      <div class="ctx-header"><strong>${username}</strong> <button type="button" class="ctx-close" onclick="chatApp.closeUserContextMenu()">✕</button></div>
+      <button type="button" class="ctx-btn ctx-kick" onclick="chatApp.kickUser(${userId},'${username}');chatApp.closeUserContextMenu()">🥾 Kick</button>
+      <button type="button" class="ctx-btn ctx-ban"  onclick="chatApp.banUser(${userId},'${username}');chatApp.closeUserContextMenu()">⛔ Ban</button>
       <div class="ctx-mute-row">
         <select id="ctx-mute-dur">
           <option value="0">Permanent</option>
@@ -577,14 +584,24 @@ class SchoolChatApp {
           <option value="1800">30 min</option>
           <option value="3600">1 hour</option>
         </select>
-        <button class="ctx-btn ctx-mute" onclick="chatApp.adminMuteUser(${userId},'${username}',document.getElementById('ctx-mute-dur').value);chatApp.closeUserContextMenu()">🔇 Mute</button>
+        <button type="button" class="ctx-btn ctx-mute" onclick="chatApp.adminMuteUser(${userId},'${username}',document.getElementById('ctx-mute-dur').value);chatApp.closeUserContextMenu()">🔇 Mute</button>
       </div>
-      <button class="ctx-btn ctx-unmute" onclick="chatApp.adminUnmuteUser(${userId},'${username}');chatApp.closeUserContextMenu()">🔊 Unmute</button>
+      <button type="button" class="ctx-btn ctx-unmute" onclick="chatApp.adminUnmuteUser(${userId},'${username}');chatApp.closeUserContextMenu()">🔊 Unmute</button>
     `;
-    const rect = el.getBoundingClientRect();
-    menu.style.top = (rect.bottom + window.scrollY + 4) + 'px';
-    menu.style.left = (rect.left + window.scrollX) + 'px';
+    menu.style.visibility = 'hidden';
     document.body.appendChild(menu);
+    const rect = el.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    let top = rect.bottom + 4;
+    let left = rect.left;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    if (top < 8) top = 8;
+    menu.style.top = top + 'px';
+    menu.style.left = left + 'px';
+    menu.style.visibility = 'visible';
     setTimeout(() => document.addEventListener('click', this._ctxOutside = (e) => {
       if (!menu.contains(e.target) && e.target !== el) this.closeUserContextMenu();
     }), 0);
@@ -716,6 +733,7 @@ class SchoolChatApp {
   openAdminPanel() {
     document.getElementById('admin-panel').classList.add('open');
     this.loadUsers();
+    this.loadLogs();
   }
 
   closeAdminPanel() {
@@ -878,21 +896,25 @@ class SchoolChatApp {
   }
 
   async applySlowmode() {
-    const channel = document.getElementById('slowmode-channel').value;
     const seconds = parseInt(document.getElementById('slowmode-seconds').value);
-    try {
-      const r = await fetch(`${BACKEND}/api/admin/slowmode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-        body: JSON.stringify({ channel, seconds })
-      });
-      const d = await r.json();
-      const statusEl = document.getElementById('slowmode-status');
-      if (statusEl) statusEl.textContent = r.ok ? `✅ ${d.message}` : `❌ ${d.error}`;
-    } catch (e) {
-      const statusEl = document.getElementById('slowmode-status');
-      if (statusEl) statusEl.textContent = '❌ Failed to apply slowmode';
+    const channels = ['general', 'class'];
+    const statusEl = document.getElementById('slowmode-status');
+    if (statusEl) statusEl.textContent = 'Applying…';
+    let allOk = true;
+    for (const channel of channels) {
+      try {
+        const r = await fetch(`${BACKEND}/api/admin/slowmode`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+          body: JSON.stringify({ channel, seconds })
+        });
+        if (!r.ok) allOk = false;
+      } catch (e) { allOk = false; }
     }
+    const label = seconds === 0 ? 'Off' : seconds >= 60 ? `${seconds / 60} min` : `${seconds}s`;
+    if (statusEl) statusEl.textContent = allOk
+      ? `✅ Slowmode ${seconds === 0 ? 'disabled' : `set to ${label}`} on all channels`
+      : '❌ Failed to apply slowmode';
   }
 
   async createUser() {
