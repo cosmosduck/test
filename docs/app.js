@@ -8,8 +8,8 @@ class SchoolChatApp {
     this.role = sessionStorage.getItem('role');
     this.currentChannel = 'general';
     this.socket = null;
-    this.messages = { general: [], class: [] };
-    this.notifications = { general: 0, class: 0 };
+    this.messages = { general: [] };
+    this.notifications = { general: 0 };
     this.activeUsers = [];
     this.typingUsers = {};
     this.typingTimeout = null;
@@ -185,10 +185,6 @@ class SchoolChatApp {
               <span># general</span>
               <span class="notification-badge" id="general-badge" style="display: none;">0</span>
             </div>
-            <div class="channel-item" onclick="chatApp.switchChannel('class')">
-              <span># class</span>
-              <span class="notification-badge" id="class-badge" style="display: none;">0</span>
-            </div>
           </div>
           <div class="sidebar-footer">
             ${this.role === 'owner' ? '<button class="btn btn-primary" onclick="chatApp.openAdminPanel()">👤 Admin</button>' : ''}
@@ -216,10 +212,6 @@ class SchoolChatApp {
         <div class="admin-header">
           <h2>⚙️ Admin Dashboard</h2>
           <button class="close-btn" onclick="chatApp.closeAdminPanel()">&times;</button>
-        </div>
-        <div class="admin-tabs">
-          <div class="admin-tab active" data-tab="users" onclick="chatApp.switchAdminTab('users')">👤 Users</div>
-          <div class="admin-tab" data-tab="logs" onclick="chatApp.switchAdminTab('logs')">🔒 Security Logs</div>
         </div>
         <div class="admin-content">
           <div class="admin-tab-panel active" id="tab-users">
@@ -255,13 +247,6 @@ class SchoolChatApp {
             <div class="admin-section">
               <h3>Manage Users</h3>
               <div id="user-list"></div>
-            </div>
-          </div>
-          <div class="admin-tab-panel" id="tab-logs">
-            <div class="admin-section">
-              <h3>Security Logs</h3>
-              <button class="log-clear-btn" onclick="chatApp.clearLogs()">🗑 Clear All Logs</button>
-              <div id="security-log-list"><p style="color:#72767d">Loading...</p></div>
             </div>
           </div>
         </div>
@@ -733,85 +718,10 @@ class SchoolChatApp {
   openAdminPanel() {
     document.getElementById('admin-panel').classList.add('open');
     this.loadUsers();
-    this.loadLogs();
   }
 
   closeAdminPanel() {
     document.getElementById('admin-panel').classList.remove('open');
-  }
-
-  switchAdminTab(tab) {
-    document.querySelectorAll('.admin-tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
-    document.querySelectorAll('.admin-tab-panel').forEach(el => el.classList.remove('active'));
-    const panel = document.getElementById(`tab-${tab}`);
-    if (panel) panel.classList.add('active');
-    if (tab === 'logs') this.loadLogs();
-  }
-
-  async loadLogs() {
-    const container = document.getElementById('security-log-list');
-    if (!container) return;
-    container.innerHTML = '<p style="color:#72767d">Loading...</p>';
-    try {
-      const response = await fetch(`${BACKEND}/api/admin/logs`, {
-        headers: { 'Authorization': `Bearer ${this.token}` }
-      });
-      if (!response.ok) {
-        container.innerHTML = `<p style="color:#f04747">Error ${response.status}: could not load logs.</p>`;
-        return;
-      }
-      const logs = await response.json();
-      if (!Array.isArray(logs)) {
-        container.innerHTML = '<p style="color:#f04747">Unexpected response from server.</p>';
-        return;
-      }
-      this.displayLogs(logs, container);
-    } catch (e) {
-      container.innerHTML = `<p style="color:#f04747">Failed to load logs: ${e.message}</p>`;
-    }
-  }
-
-  displayLogs(logs, container) {
-    if (!logs.length) {
-      container.innerHTML = '<p style="color:#72767d">No activity yet.</p>';
-      return;
-    }
-    const badgeClass = e => {
-      if (e === 'login_success') return 'success';
-      if (e === 'login_fail' || e === 'pin_fail') return 'fail';
-      if (e === 'lockout') return 'warn';
-      return 'info';
-    };
-    const label = e => ({
-      login_success: '✅ Login OK',
-      login_fail: '❌ Login Fail',
-      login_pass_ok: '🔑 Pass OK',
-      pin_fail: '❌ PIN Fail',
-      lockout: '🚫 Locked Out',
-    }[e] || e);
-    container.innerHTML = logs.map(log => {
-      const time = new Date(log.created_at).toLocaleString();
-      return `<div class="log-entry">
-        <span class="log-badge ${badgeClass(log.event)}">${label(log.event)}</span>
-        <div>
-          <div><strong>${this.escapeHtml(log.username || '—')}</strong> &nbsp; ${this.escapeHtml(log.details || '')}</div>
-          <div class="log-meta">🕐 ${time} &nbsp;·&nbsp; IP: ${this.escapeHtml(log.ip || '—')}</div>
-        </div>
-      </div>`;
-    }).join('');
-  }
-
-  async clearLogs() {
-    if (!confirm('Clear all security logs?')) return;
-    try {
-      await fetch(`${BACKEND}/api/admin/logs`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${this.token}` }
-      });
-      this.loadLogs();
-    } catch (e) {
-      alert('Failed to clear logs');
-    }
   }
 
   async loadUsers() {
@@ -897,24 +807,25 @@ class SchoolChatApp {
 
   async applySlowmode() {
     const seconds = parseInt(document.getElementById('slowmode-seconds').value);
-    const channels = ['general', 'class'];
     const statusEl = document.getElementById('slowmode-status');
     if (statusEl) statusEl.textContent = 'Applying…';
-    let allOk = true;
-    for (const channel of channels) {
-      try {
-        const r = await fetch(`${BACKEND}/api/admin/slowmode`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-          body: JSON.stringify({ channel, seconds })
-        });
-        if (!r.ok) allOk = false;
-      } catch (e) { allOk = false; }
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/slowmode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ channel: 'general', seconds })
+      });
+      if (r.ok) {
+        this.slowmode['general'] = seconds;
+        this.updateSlowmodeBar();
+        const label = seconds === 0 ? 'Off' : seconds >= 60 ? `${seconds / 60} min` : `${seconds}s`;
+        if (statusEl) statusEl.textContent = `✅ Slowmode ${seconds === 0 ? 'disabled' : `set to ${label}`}`;
+      } else {
+        if (statusEl) statusEl.textContent = '❌ Failed to apply slowmode';
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = '❌ Network error';
     }
-    const label = seconds === 0 ? 'Off' : seconds >= 60 ? `${seconds / 60} min` : `${seconds}s`;
-    if (statusEl) statusEl.textContent = allOk
-      ? `✅ Slowmode ${seconds === 0 ? 'disabled' : `set to ${label}`} on all channels`
-      : '❌ Failed to apply slowmode';
   }
 
   async createUser() {
