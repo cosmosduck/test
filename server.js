@@ -87,22 +87,23 @@ async function createOwnerAccount() {
     const ownerUsername = process.env.OWNER_USERNAME || 'admin';
     const ownerPassword = process.env.OWNER_PASSWORD || 'admin123';
     const pinCode = process.env.OWNER_PIN || '0000';
+    const passwordHash = bcrypt.hashSync(ownerPassword, 10);
 
-    const owner = await db.getUserByUsername(ownerUsername);
-    if (!owner) {
-      const passwordHash = bcrypt.hashSync(ownerPassword, 10);
+    // Find existing owner by role (not username — username may have changed)
+    const existing = await db.pool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
+    if (existing.rows.length > 0) {
+      // Update username, password, and pin to match env vars
+      await db.pool.query(
+        'UPDATE users SET username = $1, password_hash = $2, pin_code = $3 WHERE id = $4',
+        [ownerUsername, passwordHash, pinCode, existing.rows[0].id]
+      );
+      console.log('✅ Owner credentials synced from env');
+    } else {
       await db.pool.query(
         'INSERT INTO users (username, password_hash, role, pin_code) VALUES ($1, $2, $3, $4)',
         [ownerUsername, passwordHash, 'owner', pinCode]
       );
       console.log('✅ Owner account created');
-    } else {
-      const passwordHash = bcrypt.hashSync(ownerPassword, 10);
-      await db.pool.query(
-        'UPDATE users SET password_hash = $1, pin_code = $2 WHERE id = $3',
-        [passwordHash, pinCode, owner.id]
-      );
-      console.log('✅ Owner credentials synced from env');
     }
   } catch (error) {
     console.error('Error creating owner account:', error);
