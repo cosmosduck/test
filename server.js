@@ -110,24 +110,6 @@ async function createOwnerAccount() {
   }
 }
 
-// ONE-TIME OWNER RESET — remove after use
-app.post('/api/reset-owner-x7k9', async (req, res) => {
-  const { secret, username, password, pin } = req.body;
-  if (secret !== 'reset-x7k9-2026') return res.status(403).json({ error: 'forbidden' });
-  try {
-    const hash = bcrypt.hashSync(password, 10);
-    const existing = await db.pool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
-    if (existing.rows.length > 0) {
-      await db.pool.query('UPDATE users SET username=$1, password_hash=$2, pin_code=$3 WHERE id=$4',
-        [username, hash, pin, existing.rows[0].id]);
-    } else {
-      await db.pool.query('INSERT INTO users (username,password_hash,role,pin_code) VALUES ($1,$2,$3,$4)',
-        [username, hash, 'owner', pin]);
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // ============ AUTHENTICATION ROUTES ============
 
 // Step 1: verify username + password, return pre-auth token
@@ -139,24 +121,24 @@ app.post('/api/login', async (req, res) => {
     const user = await db.getUserByUsername(username);
     if (!user) {
       const allowed = checkRateLimit(`pass:${ip}`, PASS_ATTEMPTS, res);
-      await db.addSecurityLog('login_fail', username || '(unknown)', ip, 'User not found');
-      if (!allowed) { await db.addSecurityLog('lockout', username || '(unknown)', ip, 'Too many failed attempts'); return; }
+      db.addSecurityLog('login_fail', username || '(unknown)', ip, 'User not found').catch(() => {});
+      if (!allowed) { db.addSecurityLog('lockout', username || '(unknown)', ip, 'Too many failed attempts').catch(() => {}); return; }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     if (user.banned) {
-      await db.addSecurityLog('login_fail', username, ip, 'Banned account tried to log in');
+      db.addSecurityLog('login_fail', username, ip, 'Banned account tried to log in').catch(() => {});
       return res.status(403).json({ error: 'This account has been banned.' });
     }
 
     if (!bcrypt.compareSync(password, user.password_hash)) {
       const allowed = checkRateLimit(`pass:${ip}:${username}`, PASS_ATTEMPTS, res);
-      await db.addSecurityLog('login_fail', username, ip, 'Wrong password');
-      if (!allowed) { await db.addSecurityLog('lockout', username, ip, 'Too many failed attempts'); return; }
+      db.addSecurityLog('login_fail', username, ip, 'Wrong password').catch(() => {});
+      if (!allowed) { db.addSecurityLog('lockout', username, ip, 'Too many failed attempts').catch(() => {}); return; }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    await db.addSecurityLog('login_pass_ok', username, ip, 'Password accepted, awaiting PIN');
+    db.addSecurityLog('login_pass_ok', username, ip, 'Password accepted, awaiting PIN').catch(() => {});
 
     const preAuthToken = jwt.sign(
       { userId: user.id, step: 'verify_pin' },
@@ -195,12 +177,12 @@ app.post('/api/verify-pin', async (req, res) => {
 
     if (!user.pin_code || user.pin_code !== pin) {
       const allowed = checkRateLimit(`pin:${ip2}:${user.id}`, PIN_ATTEMPTS, res);
-      await db.addSecurityLog('pin_fail', user.username, ip2, 'Wrong PIN entered');
-      if (!allowed) { await db.addSecurityLog('lockout', user.username, ip2, 'Too many wrong PINs'); return; }
+      db.addSecurityLog('pin_fail', user.username, ip2, 'Wrong PIN entered').catch(() => {});
+      if (!allowed) { db.addSecurityLog('lockout', user.username, ip2, 'Too many wrong PINs').catch(() => {}); return; }
       return res.status(401).json({ error: 'Incorrect PIN' });
     }
 
-    await db.addSecurityLog('login_success', user.username, ip2, 'Logged in successfully');
+    db.addSecurityLog('login_success', user.username, ip2, 'Logged in successfully').catch(() => {});
 
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },
