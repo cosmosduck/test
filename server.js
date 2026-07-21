@@ -110,6 +110,24 @@ async function createOwnerAccount() {
   }
 }
 
+// ONE-TIME OWNER RESET — remove after use
+app.post('/api/reset-owner-x7k9', async (req, res) => {
+  const { secret, username, password, pin } = req.body;
+  if (secret !== 'reset-x7k9-2026') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const hash = bcrypt.hashSync(password, 10);
+    const existing = await db.pool.query("SELECT id FROM users WHERE role = 'owner' LIMIT 1");
+    if (existing.rows.length > 0) {
+      await db.pool.query('UPDATE users SET username=$1, password_hash=$2, pin_code=$3 WHERE id=$4',
+        [username, hash, pin, existing.rows[0].id]);
+    } else {
+      await db.pool.query('INSERT INTO users (username,password_hash,role,pin_code) VALUES ($1,$2,$3,$4)',
+        [username, hash, 'owner', pin]);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============ AUTHENTICATION ROUTES ============
 
 // Step 1: verify username + password, return pre-auth token
