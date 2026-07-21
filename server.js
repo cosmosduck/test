@@ -110,6 +110,18 @@ async function createOwnerAccount() {
   }
 }
 
+// TEMP DEBUG
+app.post('/api/debug-login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await db.getUserByUsername(username);
+    if (!user) return res.json({ step: 'no_user' });
+    const match = bcrypt.compareSync(password, user.password_hash);
+    const envPass = process.env.OWNER_PASSWORD || '(not set)';
+    res.json({ match, role: user.role, envPassHint: envPass.slice(0,6) + '***', pinInDb: user.pin_code });
+  } catch (e) { res.json({ step: 'error', msg: e.message }); }
+});
+
 // ============ AUTHENTICATION ROUTES ============
 
 // Step 1: verify username + password, return pre-auth token
