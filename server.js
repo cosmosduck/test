@@ -110,18 +110,6 @@ async function createOwnerAccount() {
   }
 }
 
-// TEMP DEBUG
-app.post('/api/debug-login', async (req, res) => {
-  const { username, password } = req.body;
-  try {
-    const user = await db.getUserByUsername(username);
-    if (!user) return res.json({ step: 'no_user' });
-    const match = bcrypt.compareSync(password, user.password_hash);
-    const envPass = process.env.OWNER_PASSWORD || '(not set)';
-    res.json({ match, role: user.role, envPassHint: envPass.slice(0,6) + '***', pinInDb: user.pin_code });
-  } catch (e) { res.json({ step: 'error', msg: e.message }); }
-});
-
 // ============ AUTHENTICATION ROUTES ============
 
 // Step 1: verify username + password, return pre-auth token
@@ -133,24 +121,18 @@ app.post('/api/login', async (req, res) => {
     const user = await db.getUserByUsername(username);
     if (!user) {
       const allowed = checkRateLimit(`pass:${ip}`, PASS_ATTEMPTS, res);
-      db.addSecurityLog('login_fail', username || '(unknown)', ip, 'User not found').catch(() => {});
-      if (!allowed) { db.addSecurityLog('lockout', username || '(unknown)', ip, 'Too many failed attempts').catch(() => {}); return; }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     if (user.banned) {
-      db.addSecurityLog('login_fail', username, ip, 'Banned account tried to log in').catch(() => {});
       return res.status(403).json({ error: 'This account has been banned.' });
     }
 
     if (!bcrypt.compareSync(password, user.password_hash)) {
       const allowed = checkRateLimit(`pass:${ip}:${username}`, PASS_ATTEMPTS, res);
-      db.addSecurityLog('login_fail', username, ip, 'Wrong password').catch(() => {});
-      if (!allowed) { db.addSecurityLog('lockout', username, ip, 'Too many failed attempts').catch(() => {}); return; }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    db.addSecurityLog('login_pass_ok', username, ip, 'Password accepted, awaiting PIN').catch(() => {});
 
     const preAuthToken = jwt.sign(
       { userId: user.id, step: 'verify_pin' },
@@ -160,7 +142,7 @@ app.post('/api/login', async (req, res) => {
 
     res.json({ preAuthToken, requiresPin: true });
   } catch (error) {
-    res.status(500).json({ error: 'Login failed', debug: error.message });
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 
@@ -189,12 +171,9 @@ app.post('/api/verify-pin', async (req, res) => {
 
     if (!user.pin_code || user.pin_code !== pin) {
       const allowed = checkRateLimit(`pin:${ip2}:${user.id}`, PIN_ATTEMPTS, res);
-      db.addSecurityLog('pin_fail', user.username, ip2, 'Wrong PIN entered').catch(() => {});
-      if (!allowed) { db.addSecurityLog('lockout', user.username, ip2, 'Too many wrong PINs').catch(() => {}); return; }
       return res.status(401).json({ error: 'Incorrect PIN' });
     }
 
-    db.addSecurityLog('login_success', user.username, ip2, 'Logged in successfully').catch(() => {});
 
     const token = jwt.sign(
       { userId: user.id, username: user.username, role: user.role },
@@ -334,7 +313,6 @@ app.post('/api/admin/users/:userId/kick', verifyToken, isOwner, async (req, res)
         socket.disconnect(true);
       }
     }
-    await db.addSecurityLog('kick', user.username, null, `Kicked by owner`);
     res.json({ message: `${user.username} kicked` });
   } catch (error) {
     res.status(500).json({ error: 'Failed to kick user' });
@@ -359,7 +337,6 @@ app.post('/api/admin/users/:userId/ban', verifyToken, isOwner, async (req, res) 
         socket.disconnect(true);
       }
     }
-    await db.addSecurityLog('ban', user.username, null, `Banned by owner`);
     res.json({ message: `${user.username} banned` });
   } catch (error) {
     res.status(500).json({ error: 'Failed to ban user' });
@@ -374,7 +351,6 @@ app.post('/api/admin/users/:userId/unban', verifyToken, isOwner, async (req, res
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     await db.unbanUser(userId);
-    await db.addSecurityLog('unban', user.username, null, `Unbanned by owner`);
     res.json({ message: `${user.username} unbanned` });
   } catch (error) {
     res.status(500).json({ error: 'Failed to unban user' });
@@ -409,7 +385,6 @@ app.post('/api/admin/users/:userId/mute', verifyToken, isOwner, async (req, res)
     }
 
     const label = duration ? `${duration}s timeout` : 'permanent mute';
-    await db.addSecurityLog('mute', user.username, null, `${label} by owner`);
     res.json({ message: `${user.username} muted (${label})` });
   } catch (error) {
     res.status(500).json({ error: 'Failed to mute user' });
@@ -434,7 +409,6 @@ app.post('/api/admin/users/:userId/unmute', verifyToken, isOwner, async (req, re
       if (sock) sock.emit('unmuted', { message: '🔊 You have been unmuted.' });
     }
 
-    await db.addSecurityLog('unmute', user.username, null, `Unmuted by owner`);
     res.json({ message: `${user.username} unmuted` });
   } catch (error) {
     res.status(500).json({ error: 'Failed to unmute user' });
