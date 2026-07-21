@@ -160,7 +160,7 @@ app.post('/api/login', async (req, res) => {
 
     res.json({ preAuthToken, requiresPin: true });
   } catch (error) {
-    res.status(500).json({ error: 'Login failed' });
+    res.status(500).json({ error: 'Login failed', debug: error.message });
   }
 });
 
