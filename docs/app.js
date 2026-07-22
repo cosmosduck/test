@@ -236,6 +236,7 @@ class SchoolChatApp {
               <h3>🐢 Slowmode (All Channels)</h3>
               <div class="slowmode-control">
                 <select id="slowmode-seconds">
+                  <option value="2">2 seconds</option>
                   <option value="0">Off</option>
                   <option value="5">5 seconds</option>
                   <option value="10">10 seconds</option>
