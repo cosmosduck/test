@@ -461,12 +461,16 @@ class SchoolChatApp {
     if (!messagesDiv || message.channel !== this.currentChannel) return;
 
     const time = new Date(message.timestamp || message.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const isClickable = this.role === 'owner' && parseInt(message.userId) !== parseInt(this.userId);
+    const usernameSpan = isClickable
+      ? `<span class="message-username owner-clickable" onclick="chatApp.showUserContextMenu(${message.userId},'${message.username.replace(/'/g,"\\'")}',this)">${message.username}</span>`
+      : `<span class="message-username">${message.username}</span>`;
     const html = `
       <div class="message">
         <div class="message-avatar">${message.username.charAt(0).toUpperCase()}</div>
         <div class="message-content">
           <div class="message-header">
-            <span class="message-username">${message.username}</span>
+            ${usernameSpan}
             <span class="message-time">${time}</span>
           </div>
           <div class="message-text">${this.escapeHtml(message.text)}</div>
@@ -568,35 +572,70 @@ class SchoolChatApp {
     }
   }
 
-  showUserContextMenu(userId, username, el) {
+  async showUserContextMenu(userId, username, el) {
     this.closeUserContextMenu();
     const menu = document.createElement('div');
     menu.id = 'user-ctx-menu';
     menu.className = 'user-ctx-menu';
     menu.innerHTML = `
-      <div class="ctx-header"><strong>${username}</strong> <button type="button" class="ctx-close" onclick="chatApp.closeUserContextMenu()">✕</button></div>
-      <button type="button" class="ctx-btn ctx-kick" onclick="chatApp.kickUser(${userId},'${username}');chatApp.closeUserContextMenu()">🥾 Kick</button>
-      <button type="button" class="ctx-btn ctx-ban"  onclick="chatApp.banUser(${userId},'${username}');chatApp.closeUserContextMenu()">⛔ Ban</button>
-      <div class="ctx-mute-row">
-        <select id="ctx-mute-dur">
-          <option value="0">Permanent</option>
-          <option value="60">1 min</option>
-          <option value="300">5 min</option>
-          <option value="600">10 min</option>
-          <option value="1800">30 min</option>
-          <option value="3600">1 hour</option>
-        </select>
-        <button type="button" class="ctx-btn ctx-mute" onclick="chatApp.adminMuteUser(${userId},'${username}',document.getElementById('ctx-mute-dur').value);chatApp.closeUserContextMenu()">🔇 Mute</button>
-      </div>
-      <button type="button" class="ctx-btn ctx-unmute" onclick="chatApp.adminUnmuteUser(${userId},'${username}');chatApp.closeUserContextMenu()">🔊 Unmute</button>
+      <div class="ctx-header"><strong>${username}</strong><button type="button" class="ctx-close" onclick="chatApp.closeUserContextMenu()">✕</button></div>
+      <div class="ctx-loading">Loading…</div>
     `;
     menu.style.visibility = 'hidden';
     document.body.appendChild(menu);
+    this._placeMenu(menu, el);
+    setTimeout(() => document.addEventListener('click', this._ctxOutside = (e) => {
+      if (!menu.contains(e.target) && e.target !== el) this.closeUserContextMenu();
+    }), 0);
+
+    try {
+      const r = await fetch(`${BACKEND}/api/admin/users`, { headers: { 'Authorization': `Bearer ${this.token}` } });
+      const users = await r.json();
+      const user = users.find(u => u.id === parseInt(userId));
+      if (!user) { menu.querySelector('.ctx-loading').textContent = 'User not found'; return; }
+
+      menu.innerHTML = `
+        <div class="ctx-header"><strong>${username}</strong><button type="button" class="ctx-close" onclick="chatApp.closeUserContextMenu()">✕</button></div>
+        <div class="ctx-info">
+          <span class="ctx-role-tag">${user.role === 'owner' ? '👑 Owner' : '👤 Student'}</span>
+          ${user.banned ? '<span class="ctx-status-tag ctx-tag-banned">⛔ Banned</span>' : ''}
+          ${user.muted ? '<span class="ctx-status-tag ctx-tag-muted">🔇 Muted</span>' : ''}
+        </div>
+        <div class="ctx-divider"></div>
+        <button type="button" class="ctx-btn ctx-kick" onclick="chatApp.kickUser(${userId},'${username}');chatApp.closeUserContextMenu()">🥾 Kick</button>
+        ${user.banned
+          ? `<button type="button" class="ctx-btn ctx-unban" onclick="chatApp.unbanUser(${userId},'${username}');chatApp.closeUserContextMenu()">✅ Unban</button>`
+          : `<button type="button" class="ctx-btn ctx-ban" onclick="chatApp.banUser(${userId},'${username}');chatApp.closeUserContextMenu()">⛔ Ban</button>`}
+        <div class="ctx-mute-row">
+          <select id="ctx-mute-dur">
+            <option value="0">Permanent</option>
+            <option value="60">1 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+            <option value="1800">30 min</option>
+            <option value="3600">1 hour</option>
+          </select>
+          ${user.muted
+            ? `<button type="button" class="ctx-btn ctx-unmute" onclick="chatApp.adminUnmuteUser(${userId},'${username}');chatApp.closeUserContextMenu()">🔊 Unmute</button>`
+            : `<button type="button" class="ctx-btn ctx-mute" onclick="chatApp.adminMuteUser(${userId},'${username}',document.getElementById('ctx-mute-dur').value);chatApp.closeUserContextMenu()">🔇 Mute</button>`}
+        </div>
+        <div class="ctx-divider"></div>
+        <button type="button" class="ctx-btn ctx-delete" onclick="chatApp.deleteUser(${userId});chatApp.closeUserContextMenu()">🗑 Delete user</button>
+      `;
+      this._placeMenu(menu, el);
+    } catch(e) {
+      const l = menu.querySelector('.ctx-loading');
+      if (l) l.textContent = 'Failed to load';
+    }
+  }
+
+  _placeMenu(menu, el) {
+    menu.style.visibility = 'hidden';
     const rect = el.getBoundingClientRect();
-    const mw = menu.offsetWidth;
-    const mh = menu.offsetHeight;
     let top = rect.bottom + 4;
     let left = rect.left;
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
     if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
     if (left < 8) left = 8;
     if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
@@ -604,9 +643,6 @@ class SchoolChatApp {
     menu.style.top = top + 'px';
     menu.style.left = left + 'px';
     menu.style.visibility = 'visible';
-    setTimeout(() => document.addEventListener('click', this._ctxOutside = (e) => {
-      if (!menu.contains(e.target) && e.target !== el) this.closeUserContextMenu();
-    }), 0);
   }
 
   closeUserContextMenu() {
