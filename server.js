@@ -416,14 +416,18 @@ app.post('/api/admin/users/:userId/unmute', verifyToken, isOwner, async (req, re
 });
 
 // Set slowmode for a channel
-app.post('/api/admin/slowmode', verifyToken, isOwner, (req, res) => {
-  const { channel, seconds } = req.body;
-  const secs = parseInt(seconds) || 0;
-  if (!channel) return res.status(400).json({ error: 'Channel required' });
-  slowmode[channel] = secs;
-  db.setSlowmode(channel, secs).catch(err => console.error('slowmode db:', err.message));
-  io.emit('slowmode_update', { channel, seconds: secs });
-  res.json({ message: `Slowmode set to ${secs}s for #${channel}` });
+app.post('/api/admin/slowmode', verifyToken, isOwner, async (req, res) => {
+  try {
+    const { channel, seconds } = req.body;
+    const secs = parseInt(seconds) || 0;
+    if (!channel) return res.status(400).json({ error: 'Channel required' });
+    slowmode[channel] = secs;
+    if (db.setSlowmode) db.setSlowmode(channel, secs).catch(err => console.error('slowmode db:', err.message));
+    io.emit('slowmode_update', { channel, seconds: secs });
+    res.json({ message: `Slowmode set to ${secs}s for #${channel}` });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to set slowmode: ' + e.message });
+  }
 });
 
 // ============ SOCKET.IO REAL-TIME CHAT ============
