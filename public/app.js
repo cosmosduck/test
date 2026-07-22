@@ -67,6 +67,10 @@ class SchoolChatApp {
     btn.textContent = 'Logging in…';
     errorDiv.textContent = '';
 
+    const slowTimer = setTimeout(() => {
+      if (btn.disabled) btn.textContent = 'Waking up server… (may take ~20s)';
+    }, 4000);
+
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
@@ -82,10 +86,12 @@ class SchoolChatApp {
         return;
       }
 
+      clearTimeout(slowTimer);
       const data = await response.json();
       this.preAuthToken = data.preAuthToken;
       this.showPinScreen();
     } catch (error) {
+      clearTimeout(slowTimer);
       errorDiv.textContent = 'Login failed: ' + error.message;
       btn.disabled = false;
       btn.textContent = 'Login';
@@ -101,10 +107,10 @@ class SchoolChatApp {
           <p style="text-align:center;color:#7b7fa8;margin-bottom:24px;font-size:13px;">Enter your 4-digit security code</p>
           <div id="pin-error" class="error"></div>
           <div class="pin-inputs">
-            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-0" onkeyup="chatApp.pinInput(event,0)" onkeydown="chatApp.pinKeydown(event,0)">
-            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-1" onkeyup="chatApp.pinInput(event,1)" onkeydown="chatApp.pinKeydown(event,1)">
-            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-2" onkeyup="chatApp.pinInput(event,2)" onkeydown="chatApp.pinKeydown(event,2)">
-            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="one-time-code" class="pin-digit" id="pin-3" onkeyup="chatApp.pinInput(event,3)" onkeydown="chatApp.pinKeydown(event,3)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" id="pin-0" oninput="chatApp.pinInput(event,0)" onkeydown="chatApp.pinKeydown(event,0)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" id="pin-1" oninput="chatApp.pinInput(event,1)" onkeydown="chatApp.pinKeydown(event,1)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" id="pin-2" oninput="chatApp.pinInput(event,2)" onkeydown="chatApp.pinKeydown(event,2)">
+            <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="pin-digit" id="pin-3" oninput="chatApp.pinInput(event,3)" onkeydown="chatApp.pinKeydown(event,3)">
           </div>
           <button type="button" class="login-btn" onclick="chatApp.verifyPin()" style="margin-top:24px;">Verify PIN</button>
           <button type="button" onclick="chatApp.showLoginPage()" style="width:100%;margin-top:10px;background:none;border:none;color:#7b7fa8;cursor:pointer;font-size:13px;font-family:Poppins,sans-serif;">← Back to login</button>
@@ -117,10 +123,9 @@ class SchoolChatApp {
 
   pinInput(event, index) {
     const input = document.getElementById(`pin-${index}`);
-    // Only keep digits
-    input.value = input.value.replace(/[^0-9]/g, '').slice(0, 1);
-    // Advance focus on digit entry (not on backspace/delete)
-    if (input.value && index < 3 && event.key !== 'Backspace' && event.key !== 'Delete') {
+    const clean = input.value.replace(/[^0-9]/g, '').slice(0, 1);
+    if (input.value !== clean) input.value = clean;
+    if (clean && index < 3) {
       document.getElementById(`pin-${index + 1}`).focus();
     }
   }
