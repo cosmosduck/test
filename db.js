@@ -39,6 +39,39 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS security_logs (
+        id SERIAL PRIMARY KEY,
+        event VARCHAR(50) NOT NULL,
+        username VARCHAR(255),
+        ip VARCHAR(100),
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_security_logs_created ON security_logs(created_at DESC);
+    `);
+
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN DEFAULT FALSE;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS slowmode (
+        channel VARCHAR(50) PRIMARY KEY,
+        seconds INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS muted_users (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TIMESTAMPTZ
+      );
+    `);
+
     console.log('✅ Database initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
@@ -65,8 +98,44 @@ async function createUser(username, passwordHash, pinCode) {
 
 async function getAllUsers() {
   const result = await pool.query(
-    'SELECT id, username, role, pin_code, created_at FROM users ORDER BY created_at DESC'
+    'SELECT id, username, role, pin_code, banned, created_at FROM users ORDER BY created_at DESC'
   );
+  return result.rows;
+}
+
+async function banUser(userId) {
+  await pool.query('UPDATE users SET banned = TRUE WHERE id = $1', [userId]);
+}
+
+async function unbanUser(userId) {
+  await pool.query('UPDATE users SET banned = FALSE WHERE id = $1', [userId]);
+}
+
+async function setSlowmode(channel, seconds) {
+  await pool.query(
+    'INSERT INTO slowmode (channel, seconds) VALUES ($1, $2) ON CONFLICT (channel) DO UPDATE SET seconds = $2',
+    [channel, seconds]
+  );
+}
+
+async function getSlowmodes() {
+  const result = await pool.query('SELECT channel, seconds FROM slowmode');
+  return result.rows;
+}
+
+async function muteUser(userId, expiresAt) {
+  await pool.query(
+    'INSERT INTO muted_users (user_id, expires_at) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET expires_at = $2',
+    [userId, expiresAt || null]
+  );
+}
+
+async function unmuteUser(userId) {
+  await pool.query('DELETE FROM muted_users WHERE user_id = $1', [userId]);
+}
+
+async function getMutedUsers() {
+  const result = await pool.query('SELECT user_id, expires_at FROM muted_users');
   return result.rows;
 }
 
@@ -90,6 +159,25 @@ async function getMessagesByChannel(channel, limit = 100) {
   return result.rows.reverse();
 }
 
+async function addSecurityLog(event, username, ip, details) {
+  try {
+    await pool.query(
+      'INSERT INTO security_logs (event, username, ip, details) VALUES ($1, $2, $3, $4)',
+      [event, username || null, ip || null, details || null]
+    );
+  } catch (err) {
+    console.error('Failed to write security log:', err.message);
+  }
+}
+
+async function getSecurityLogs(limit = 200) {
+  const result = await pool.query(
+    'SELECT * FROM security_logs ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
 module.exports = {
   pool,
   initializeDatabase,
@@ -99,5 +187,14 @@ module.exports = {
   getAllUsers,
   deleteUser,
   saveMessage,
-  getMessagesByChannel
+  getMessagesByChannel,
+  addSecurityLog,
+  getSecurityLogs,
+  banUser,
+  unbanUser,
+  setSlowmode,
+  getSlowmodes,
+  muteUser,
+  unmuteUser,
+  getMutedUsers
 };
